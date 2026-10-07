@@ -1,0 +1,282 @@
+{
+  "AO": {
+    "full": "Area of Operations",
+    "ko": "작전 지역",
+    "desc": "부대가 작전을 수행하도록 할당된 지역"
+  },
+  "AA": {
+    "full": "Assembly Area",
+    "ko": "집결지",
+    "desc": "작전 투입 전 부대가 집결·준비하는 지역"
+  },
+  "LD": {
+    "full": "Line of Departure",
+    "ko": "공격 개시선",
+    "desc": "공격 부대가 통과하면서 공격이 시작되는 통제선"
+  },
+  "PL": {
+    "full": "Phase Line",
+    "ko": "통제선",
+    "desc": "작전 진행 통제를 위해 지형지물을 따라 설정한 선"
+  },
+  "OBJ": {
+    "full": "Objective",
+    "ko": "목표",
+    "desc": "작전의 물리적 목표 지역"
+  },
+  "ROE": {
+    "full": "Rules of Engagement",
+    "ko": "교전 규칙",
+    "desc": "무력 사용의 조건과 한계를 정한 규칙"
+  },
+  "FRAGO": {
+    "full": "Fragmentary Order",
+    "ko": "단편 명령",
+    "desc": "기존 작전 명령의 변경 사항만 담은 명령"
+  },
+  "WARNORD": {
+    "full": "Warning Order",
+    "ko": "준비 명령",
+    "desc": "임무 수령 직후 예하 부대의 준비를 시작시키는 예비 명령"
+  },
+  "OPORD": {
+    "full": "Operation Order",
+    "ko": "작전 명령",
+    "desc": "상황·임무·실시·전투근무지원·지휘통신의 5단락 명령"
+  },
+  "COA": {
+    "full": "Course of Action",
+    "ko": "방책",
+    "desc": "임무 달성을 위해 선택 가능한 행동 방안"
+  },
+  "BDA": {
+    "full": "Battle Damage Assessment",
+    "ko": "전투 피해 평가",
+    "desc": "타격 후 표적 피해 정도의 평가"
+  },
+  "ISR": {
+    "full": "Intelligence, Surveillance and Reconnaissance",
+    "ko": "정보·감시·정찰",
+    "desc": "정보 수집 자산과 활동의 총칭"
+  },
+  "HUMINT": {
+    "full": "Human Intelligence",
+    "ko": "인간 정보",
+    "desc": "사람을 출처로 수집한 정보"
+  },
+  "SIGINT": {
+    "full": "Signals Intelligence",
+    "ko": "신호 정보",
+    "desc": "통신·전자 신호에서 수집한 정보"
+  },
+  "IMINT": {
+    "full": "Imagery Intelligence",
+    "ko": "영상 정보",
+    "desc": "영상·사진에서 수집한 정보"
+  },
+  "IPB": {
+    "full": "Intelligence Preparation of the Battlefield",
+    "ko": "전장 정보 분석",
+    "desc": "지형·기상·적 분석을 통한 작전 준비 절차"
+  },
+  "NAI": {
+    "full": "Named Area of Interest",
+    "ko": "관심 지역",
+    "desc": "적 활동 징후를 확인하기 위해 감시하는 지역"
+  },
+  "PIR": {
+    "full": "Priority Intelligence Requirement",
+    "ko": "우선 정보 요구",
+    "desc": "지휘관 결심에 필수적인 정보 요구"
+  },
+  "CSS": {
+    "full": "Combat Service Support",
+    "ko": "전투 근무 지원",
+    "desc": "보급·정비·수송·의무 등 지원 기능"
+  },
+  "LOGPAC": {
+    "full": "Logistics Package",
+    "ko": "군수 지원 패키지",
+    "desc": "예하 부대로 보내는 보급 묶음"
+  },
+  "CASEVAC": {
+    "full": "Casualty Evacuation",
+    "ko": "사상자 후송",
+    "desc": "비의무 수단을 포함한 사상자 이동"
+  },
+  "MEDEVAC": {
+    "full": "Medical Evacuation",
+    "ko": "의무 후송",
+    "desc": "의무 인력·장비가 갖춰진 수단으로 환자를 후송"
+  },
+  "POL": {
+    "full": "Petroleum, Oil and Lubricants",
+    "ko": "유류",
+    "desc": "연료·윤활유 등 유류 보급품"
+  },
+  "MRE": {
+    "full": "Meal, Ready-to-Eat",
+    "ko": "전투 식량",
+    "desc": "조리 없이 먹을 수 있는 야전 식량"
+  },
+  "C2": {
+    "full": "Command and Control",
+    "ko": "지휘통제",
+    "desc": "지휘관이 부대를 지휘·통제하는 권한과 체계"
+  },
+  "C4I": {
+    "full": "Command, Control, Communications, Computers and Intelligence",
+    "ko": "지휘·통제·통신·컴퓨터·정보",
+    "desc": "지휘통제 체계의 통합 개념"
+  },
+  "CP": {
+    "full": "Command Post",
+    "ko": "지휘소",
+    "desc": "지휘관과 참모가 부대를 지휘하는 장소"
+  },
+  "TOC": {
+    "full": "Tactical Operations Center",
+    "ko": "전술 작전 본부",
+    "desc": "작전 상황을 통제하는 지휘소 핵심 조직"
+  },
+  "SITREP": {
+    "full": "Situation Report",
+    "ko": "상황 보고",
+    "desc": "부대 상황과 작전 진행을 주기적으로 보고"
+  },
+  "SPOTREP": {
+    "full": "Spot Report",
+    "ko": "첩보 보고",
+    "desc": "관측 즉시 보내는 신속 보고(SALUTE 형식)"
+  },
+  "SALUTE": {
+    "full": "Size, Activity, Location, Unit, Time, Equipment",
+    "ko": "규모·활동·위치·부대·시각·장비",
+    "desc": "첩보 보고 항목 순서"
+  },
+  "DTG": {
+    "full": "Date-Time Group",
+    "ko": "일시군",
+    "desc": "일·시·분·시간대·월·년 형식의 군 시간 표기"
+  },
+  "COMSEC": {
+    "full": "Communications Security",
+    "ko": "통신 보안",
+    "desc": "통신 내용의 비밀성·무결성을 보호하는 조치"
+  },
+  "NTR": {
+    "full": "Nothing to Report",
+    "ko": "보고 사항 없음",
+    "desc": "변동·특이사항이 없음을 나타내는 표현"
+  },
+  "GOP": {
+    "full": "General Outpost",
+    "ko": "일반 전초",
+    "desc": "최전방 철책선을 경계하는 부대·지역"
+  },
+  "GP": {
+    "full": "Guard Post",
+    "ko": "감시 초소",
+    "desc": "비무장지대 안에 설치된 감시 초소"
+  },
+  "FEBA": {
+    "full": "Forward Edge of the Battle Area",
+    "ko": "전투 지역 전단",
+    "desc": "주 전투 지역의 최전방 경계"
+  },
+  "METT-TC": {
+    "full": "Mission, Enemy, Terrain and weather, Troops, Time, Civil considerations",
+    "ko": "임무·적·지형기상·가용부대·시간·민간 고려사항",
+    "desc": "임무 분석 변수"
+  },
+  "OCOKA": {
+    "full": "Observation, Cover and concealment, Obstacles, Key terrain, Avenues of approach",
+    "ko": "관측과 사계·은폐엄폐·장애물·핵심지형·접근로",
+    "desc": "지형 분석 5요소"
+  },
+  "OPCON": {
+    "full": "Operational Control",
+    "ko": "작전 통제",
+    "desc": "특정 임무·기간에 한정된 작전 지휘 권한"
+  },
+  "TACON": {
+    "full": "Tactical Control",
+    "ko": "전술 통제",
+    "desc": "기동·화력 등 세부 전술 지시 권한"
+  },
+  "MARCH": {
+    "full": "Massive hemorrhage, Airway, Respiration, Circulation, Hypothermia",
+    "ko": "대량출혈·기도·호흡·순환·저체온",
+    "desc": "전투 응급처치 평가 순서"
+  },
+  "PCC": {
+    "full": "Pre-Combat Checks",
+    "ko": "전투 준비 점검",
+    "desc": "작전 전 개인·장비 점검"
+  },
+  "PCI": {
+    "full": "Pre-Combat Inspection",
+    "ko": "전투 준비 검사",
+    "desc": "지휘자가 실시하는 전투 준비 검사"
+  },
+  "CEOI": {
+    "full": "Communications-Electronics Operating Instructions",
+    "ko": "통신 전자 운용 지시",
+    "desc": "주파수·호출부호 등 통신 운용 규정"
+  },
+  "UTC": {
+    "full": "Coordinated Universal Time",
+    "ko": "협정 세계시",
+    "desc": "국제 표준 시간(Zulu 시간)"
+  },
+  "KST": {
+    "full": "Korea Standard Time",
+    "ko": "한국 표준시",
+    "desc": "UTC+9"
+  },
+  "MGRS": {
+    "full": "Military Grid Reference System",
+    "ko": "군사 좌표 체계",
+    "desc": "격자 기반 군사 위치 표기 체계"
+  },
+  "NBC": {
+    "full": "Nuclear, Biological, Chemical",
+    "ko": "화생방",
+    "desc": "핵·생물·화학 위협"
+  },
+  "EOD": {
+    "full": "Explosive Ordnance Disposal",
+    "ko": "폭발물 처리",
+    "desc": "불발탄·급조폭발물 처리"
+  },
+  "IED": {
+    "full": "Improvised Explosive Device",
+    "ko": "급조 폭발물",
+    "desc": "비정규 방식으로 제작된 폭발물"
+  },
+  "UAV": {
+    "full": "Unmanned Aerial Vehicle",
+    "ko": "무인 항공기",
+    "desc": "조종사가 탑승하지 않는 항공기"
+  },
+  "LZ": {
+    "full": "Landing Zone",
+    "ko": "착륙 지대",
+    "desc": "항공기 착륙 지역"
+  },
+  "PZ": {
+    "full": "Pickup Zone",
+    "ko": "탑승 지대",
+    "desc": "항공기로 병력을 탑승시키는 지역"
+  },
+  "ORP": {
+    "full": "Objective Rally Point",
+    "ko": "목표 집결지",
+    "desc": "목표 부근 최종 집결·준비 지점"
+  },
+  "RP": {
+    "full": "Rally Point / Release Point",
+    "ko": "집결지 / 해산점",
+    "desc": "문맥에 따라 집결 지점 또는 행군 종료·해산 지점"
+  }
+}
