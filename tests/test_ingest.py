@@ -69,7 +69,9 @@ def _para_text_payload(text: str, with_extended_ctrl: bool = False) -> bytes:
     data = b""
     if with_extended_ctrl:
         data += struct.pack("<H", 3) + b"\x00" * 14  # 8글자짜리 확장 제어 문자(필드 시작 등)
-    data += text.encode("utf-16-le") + struct.pack("<H", 13)  # 문단 끝
+    # 탭은 HWP 5.0 스펙대로 8글자(0x0009 + 탭 정보 6글자 + 0x0009)짜리 인라인 제어 문자로 넣는다
+    tab = struct.pack("<H", 9) + struct.pack("<I", 4000) + b"\x00" * 8 + struct.pack("<H", 9)
+    data += b"".join(tab if ch == "\t" else ch.encode("utf-16-le") for ch in text) + struct.pack("<H", 13)  # 문단 끝
     return data
 
 
@@ -146,11 +148,12 @@ def test_extract_hwp_rejects_non_ole(tmp_path):
 
 def test_extract_pdf(tmp_path):
     p = tmp_path / "doc.pdf"
-    p.write_bytes(_pdf_bytes(["Article 1 Purpose", "This regulation sets the", "standard for guard duty.", "2", "Article 2 Scope"]))
+    # 쪽 번호는 쪽의 맨 끝(또는 맨 첫) 줄에 있을 때만 지운다. 쪽 중간의 숫자만 있는 줄은 표 값일 수 있다
+    p.write_bytes(_pdf_bytes(["Article 1 Purpose", "This regulation sets the", "standard for guard duty.", "Article 2 Scope", "2"]))
     paras = extract_paragraphs(p)
     assert paras[0].startswith("Article 1 Purpose")
     assert any("sets the standard for guard duty." in x for x in paras)  # 줄 병합
-    assert not any(x == "2" for x in paras)  # 쪽 번호 제거
+    assert not any(x == "2" or x.endswith(" 2") for x in paras)  # 쪽 번호 제거
 
 
 def test_merge_pdf_lines():
