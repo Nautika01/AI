@@ -162,8 +162,9 @@ def run_local_check(args: argparse.Namespace) -> int:
     from .tools import build_tools
     from .tools.glossary import load_glossary
 
+    # --model 이 로컬 모델(local_model)에 들어가도록 설정을 만들기 전에 백엔드를 local 로 고정한다.
+    args.backend = "local"
     settings = _build_settings(args)
-    settings.backend = "local"
     store = build_store(settings)
     backend = LocalBackend(settings, build_tools(store, load_glossary(settings.glossary_path)), store, build_local_system_prompt(store.titles))
     print(f"[1/3] 서버 연결: {settings.local_base_url}")
@@ -220,11 +221,20 @@ def run_ingest(args: argparse.Namespace) -> int:
     return 0 if not any(r.error for r in results) else 1
 
 
+def _default_cases_path(args: argparse.Namespace, settings: Settings) -> Path:
+    """기본 질문셋: 지식 베이스 폴더(DAI_DOCS_DIR) 옆의 eval/questions.jsonl, 없으면 <루트>/data/eval/questions.jsonl."""
+    beside_docs = Path(settings.docs_dir).parent / "eval" / "questions.jsonl"
+    if beside_docs.is_file():
+        return beside_docs
+    root = Path(args.root).resolve() if args.root else Path.cwd()
+    return root / "data" / "eval" / "questions.jsonl"
+
+
 def run_eval(args: argparse.Namespace) -> int:
     from .evaluation import EvalReport, compare_reports, evaluate_answers, evaluate_retrieval, load_cases
 
     settings = _build_settings(args)
-    cases_path = Path(args.cases) if args.cases else Path(settings.docs_dir).parent / "eval" / "questions.jsonl"
+    cases_path = Path(args.cases) if args.cases else _default_cases_path(args, settings)
     try:
         cases = load_cases(cases_path)
     except (OSError, ValueError) as e:
@@ -261,11 +271,13 @@ def run_eval(args: argparse.Namespace) -> int:
     if args.compare:
         try:
             before = EvalReport.load(args.compare)
-        except (OSError, ValueError) as e:
-            print(f"✖ 비교 대상을 읽을 수 없습니다: {e}", file=sys.stderr)
+            compared = compare_reports(before, report)
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            detail = f"필드 {e} 이(가) 없습니다" if isinstance(e, KeyError) else str(e)
+            print(f"✖ 비교 대상을 읽을 수 없습니다: {detail}", file=sys.stderr)
             return 1
         print("\n[이전 결과와 비교]")
-        print("\n".join(compare_reports(before, report)))
+        print("\n".join(compared))
     return 0
 
 
@@ -327,32 +339,42 @@ def run_users(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_global_options(p: argparse.ArgumentParser, default: object = None) -> None:
+    """모든 명령에 공통인 옵션. `default` 가 주어지면 각 옵션의 기본값으로 쓴다(하위 파서용 SUPPRESS)."""
+    kw = {} if default is None else {"default": default}
+    p.add_argument("--root", help="프로젝트 루트 (data/, audit/ 상대 경로 기준)", **kw)
+    p.add_argument("--backend", choices=["claude", "local"], help="모델 백엔드 (기본: DAI_BACKEND 또는 claude)", **kw)
+    p.add_argument("--model", help="모델 ID (claude: 기본 claude-opus-5-5 / local: DAI_LOCAL_MODEL)", **kw)
+    p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], help="추론 깊이", **kw)
+    p.add_argument("--no-fallback", action="store_true", help="서버측 안전장치 폴백 비활성화", **kw)
+    p.add_argument("-v", "--verbose", action="store_true", help="도구 호출·토큰 사용량 표시", **kw)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="defense-ai", description="국방 특화 생성형 AI 비서")
-    p.add_argument("--root", help="프로젝트 루트 (data/, audit/ 상대 경로 기준)")
-    p.add_argument("--backend", choices=["claude", "local"], help="모델 백엔드 (기본: DAI_BACKEND 또는 claude)")
-    p.add_argument("--model", help="모델 ID (claude: 기본 claude-opus-5-5 / local: DAI_LOCAL_MODEL)")
-    p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], help="추론 깊이")
-    p.add_argument("--no-fallback", action="store_true", help="서버측 안전장치 폴백 비활성화")
-    p.add_argument("-v", "--verbose", action="store_true", help="도구 호출·토큰 사용량 표시")
+    _add_global_options(p)
+    # 전역 옵션은 하위 명령 뒤에 써도 된다 (예: defense-ai chat --user 홍길동 -v).
+    # 하위 파서 쪽은 기본값을 SUPPRESS 로 두어, 앞에 준 값을 하위 파서 기본값이 덮어쓰지 않게 한다.
+    common = argparse.ArgumentParser(add_help=False)
+    _add_global_options(common, default=argparse.SUPPRESS)
     sub = p.add_subparsers(dest="command")
 
-    c = sub.add_parser("chat", help="대화 (기본)")
+    c = sub.add_parser("chat", parents=[common], help="대화 (기본)")
     c.add_argument("--user", default="anonymous", help="감사 로그에 기록할 사용자 ID")
     c.add_argument("--no-stream", action="store_true", help="스트리밍 출력 끄기")
 
-    s = sub.add_parser("search", help="지식 베이스 검색")
+    s = sub.add_parser("search", parents=[common], help="지식 베이스 검색")
     s.add_argument("query")
     s.add_argument("--top-k", type=int, default=4)
     s.add_argument("--category", help="문서 분류(front matter category)로 필터")
 
-    v = sub.add_parser("serve", help="HTTP API 서버 실행")
+    v = sub.add_parser("serve", parents=[common], help="HTTP API 서버 실행")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8000)
 
-    sub.add_parser("local-check", help="로컬 모델 서버 연결 점검")
+    sub.add_parser("local-check", parents=[common], help="로컬 모델 서버 연결 점검")
 
-    g = sub.add_parser("ingest", help="HWP/HWPX/DOCX/PDF/TXT 문서를 지식 베이스 Markdown 으로 변환")
+    g = sub.add_parser("ingest", parents=[common], help="HWP/HWPX/DOCX/PDF/TXT 문서를 지식 베이스 Markdown 으로 변환")
     g.add_argument("paths", nargs="+", help="파일 또는 폴더")
     g.add_argument("--out", help="출력 폴더 (기본: DAI_DOCS_DIR)")
     g.add_argument("--category", help="문서 분류 (예: 규정, 교범, 지침)")
@@ -363,8 +385,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--overwrite", action="store_true", help="같은 이름의 .md 가 있으면 덮어쓰기")
     g.add_argument("--dry-run", action="store_true", help="저장하지 않고 구조만 미리보기")
 
-    e = sub.add_parser("eval", help="질문셋으로 검색·답변 품질 평가")
-    e.add_argument("--cases", help="질문셋 JSONL (기본: data/eval/questions.jsonl)")
+    e = sub.add_parser("eval", parents=[common], help="질문셋으로 검색·답변 품질 평가")
+    e.add_argument("--cases", help="질문셋 JSONL (기본: DAI_DOCS_DIR 옆 eval/questions.jsonl, 없으면 data/eval/questions.jsonl)")
     e.add_argument("--answers", action="store_true", help="모델을 호출해 답변까지 평가 (비용 발생)")
     e.add_argument("--k", type=int, default=4, help="검색 평가 시 상위 k")
     e.add_argument("--category", help="질문셋의 category 로 필터")
@@ -372,23 +394,23 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--out", help="결과 JSON 저장 경로")
     e.add_argument("--compare", help="비교할 이전 결과 JSON")
 
-    u = sub.add_parser("users", help="사용자 관리")
+    u = sub.add_parser("users", parents=[common], help="사용자 관리")
     usub = u.add_subparsers(dest="users_command")
-    ua = usub.add_parser("add", help="사용자 추가")
+    ua = usub.add_parser("add", parents=[common], help="사용자 추가")
     ua.add_argument("username")
     ua.add_argument("--role", choices=["user", "admin"], default="user")
     ua.add_argument("--clearance", default="RESTRICTED", help="인가 등급: UNCLASSIFIED | RESTRICTED | CONFIDENTIAL | SECRET | TOP_SECRET")
     ua.add_argument("--password", help="비밀번호 (생략 시 프롬프트, 또는 DAI_NEW_PASSWORD 환경 변수)")
-    usub.add_parser("list", help="사용자 목록")
-    up = usub.add_parser("passwd", help="비밀번호 변경")
+    usub.add_parser("list", parents=[common], help="사용자 목록")
+    up = usub.add_parser("passwd", parents=[common], help="비밀번호 변경")
     up.add_argument("username")
     up.add_argument("--password")
-    us = usub.add_parser("set", help="역할·인가 등급 변경")
+    us = usub.add_parser("set", parents=[common], help="역할·인가 등급 변경")
     us.add_argument("username")
     us.add_argument("--role", choices=["user", "admin"])
     us.add_argument("--clearance")
     for name, help_text in (("disable", "계정 비활성화"), ("enable", "계정 활성화"), ("remove", "계정 삭제")):
-        usub.add_parser(name, help=help_text).add_argument("username")
+        usub.add_parser(name, parents=[common], help=help_text).add_argument("username")
     return p
 
 

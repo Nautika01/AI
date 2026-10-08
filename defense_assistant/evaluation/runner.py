@@ -5,6 +5,7 @@
 
 - expected_refs: 검색 결과(제목 › 섹션)에 포함되어야 할 문자열. 하나라도 맞으면 적중.
 - expected_keywords: 답변에 들어 있어야 할 단어(모두). 동의어는 "A|B" 로 적는다.
+  영문·숫자 한 글자(예: "I", "5")는 앞뒤에 영문·숫자가 붙지 않은 경우에만 맞은 것으로 본다("Time" 의 i, "2025" 의 5 는 제외).
 - forbidden: 답변에 있으면 안 되는 단어.
 - blocked: true 면 보안 차단이 일어나야 정답.
 
@@ -42,7 +43,7 @@ class EvalCase:
 def load_cases(path: Path | str) -> list[EvalCase]:
     cases: list[EvalCase] = []
     seen: set[str] = set()
-    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -122,9 +123,16 @@ class AnswerResult:
     error: str | None = None
 
 
+def _alt_present(t: str, alt: str) -> bool:
+    if len(alt) == 1 and alt.isascii() and alt.isalnum():
+        # 한 글자 영문·숫자는 부분 문자열로 보면 "Time"·"2025" 같은 무관한 단어에도 걸린다.
+        return re.search(rf"(?<![a-z0-9]){re.escape(alt)}(?![a-z0-9])", t) is not None
+    return alt in t
+
+
 def _keyword_present(text: str, keyword: str) -> bool:
     t = text.lower()
-    return any(alt.strip().lower() in t for alt in keyword.split("|") if alt.strip())
+    return any(_alt_present(t, alt.strip().lower()) for alt in keyword.split("|") if alt.strip())
 
 
 def evaluate_answers(ask: Callable[[str], Any], cases: list[EvalCase], *, on_progress: Callable[[int, int, AnswerResult], None] | None = None) -> dict[str, Any]:
@@ -165,7 +173,7 @@ def evaluate_answers(ask: Callable[[str], Any], cases: list[EvalCase], *, on_pro
         "avg_seconds": round(sum(r.seconds for r in results) / n, 2) if n else None,
         "total_input_tokens": sum(r.input_tokens or 0 for r in results),
         "total_output_tokens": sum(r.output_tokens or 0 for r in results),
-        "failures": [{"id": r.id, "question": r.question, "missed": r.keywords_missed, "forbidden": r.forbidden_found, "blocked": r.blocked, "error": r.error} for r in results if not r.passed],
+        "failures": [{"id": r.id, "question": r.question, "missed": r.keywords_missed, "forbidden": r.forbidden_found, "blocked": r.blocked, "expected_blocked": r.expected_blocked, "error": r.error} for r in results if not r.passed],
         "results": [asdict(r) for r in results],
     }
 
@@ -194,7 +202,12 @@ class EvalReport:
 
     @classmethod
     def load(cls, path: Path | str) -> "EvalReport":
-        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        d = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        if not isinstance(d, dict) or not all(isinstance(d.get(k), str) for k in ("created_at", "cases_file")):
+            raise ValueError(f"{path}: 평가 보고서 형식이 아닙니다 (created_at·cases_file 이 없음).")
+        for k in ("retrieval", "answers"):
+            if d.get(k) is not None and not isinstance(d[k], dict):
+                raise ValueError(f"{path}: 평가 보고서 형식이 아닙니다 ({k} 가 객체가 아님).")
         return cls(d["created_at"], d["cases_file"], d.get("model", ""), d.get("retrieval"), d.get("answers"))
 
     def summary_lines(self) -> list[str]:
@@ -208,7 +221,7 @@ class EvalReport:
             a = self.answers
             lines.append(f"[답변] 질문 {a['cases']}개  통과율 {_pct(a['pass_rate'])}  키워드 충족 {_pct(a['keyword_rate'])}  금지어 위반 {a['forbidden_violations']}  차단 정확도 {_pct(a['block_accuracy'])}  오류 {a['errors']}  평균 {a['avg_seconds']}초  토큰 입력 {a['total_input_tokens']} / 출력 {a['total_output_tokens']}")
             for f in a["failures"][:10]:
-                why = f["error"] or (f"누락 {f['missed']}" if f["missed"] else "") + (f" 금지어 {f['forbidden']}" if f["forbidden"] else "") + (" 차단됨" if f["blocked"] else "")
+                why = f["error"] or (f"누락 {f['missed']}" if f["missed"] else "") + (f" 금지어 {f['forbidden']}" if f["forbidden"] else "") + (" 차단됨" if f["blocked"] and not f.get("expected_blocked") else "") + (" 차단 안 됨(답변 생성됨)" if f.get("expected_blocked") and not f["blocked"] else "")
                 lines.append(f"   ✖ {f['id']} {f['question']}  ({why.strip()})")
         return lines
 
@@ -225,7 +238,14 @@ def compare_reports(before: EvalReport, after: EvalReport) -> list[str]:
         if b is None and a is None:
             return
         fmt = (lambda v: _pct(v)) if pct else (lambda v: "–" if v is None else str(v))
-        delta = "" if b is None or a is None else f"  ({'+' if a - b >= 0 else ''}{(a - b) * (100 if pct else 1):.1f}{'%p' if pct else ''})"
+        if b is None or a is None:
+            delta = ""
+        elif pct:
+            delta = f"  ({(a - b) * 100:+.1f}%p)"
+        elif isinstance(a, int) and isinstance(b, int):
+            delta = f"  ({a - b:+d})"
+        else:  # MRR 처럼 0~1 범위 실수는 소수 1자리로는 변화가 ±0.0 으로 묻힌다
+            delta = f"  ({a - b:+.4f})"
         lines.append(f"  {label:14s} {fmt(b):>8s} → {fmt(a):>8s}{delta}")
 
     if before.retrieval and after.retrieval:
@@ -254,5 +274,3 @@ def compare_reports(before: EvalReport, after: EvalReport) -> list[str]:
             lines.append(f"  답변 퇴보: {', '.join(regressed)}")
     return lines
 
-
-_ = re  # 향후 정규식 키워드 지원용
