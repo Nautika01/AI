@@ -49,7 +49,7 @@ def test_evaluate_answers_with_stub():
         if "비밀" in q:
             return SimpleNamespace(text="차단", blocked=True, tools_called=[], usage={})
         if "071430" in q:
-            return SimpleNamespace(text="070530ZOCT26 입니다.", blocked=False, tools_called=["convert_military_time"], usage={"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3500})
+            return SimpleNamespace(text="070530ZOCT26 입니다.", blocked=False, tools_called=["convert_military_time"], usage={"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3500, "cache_creation_input_tokens": 3500})
         return SimpleNamespace(text="정지 명령 후 보고합니다. 사살은 안 됩니다.", blocked=False, tools_called=["search_defense_docs"], usage={"input_tokens": 20, "output_tokens": 8, "cache_read_input_tokens": None})
 
     seen = []
@@ -64,7 +64,8 @@ def test_evaluate_answers_with_stub():
     # 캐시 읽기 입력(시스템 프롬프트·도구 정의)은 input_tokens 와 별도로 합산해 보고한다.
     assert a["total_cache_read_tokens"] == 3500 and by_id["q14"]["cache_read_tokens"] == 3500
     line = next(x for x in EvalReport.build("q.jsonl", "m", None, a).summary_lines() if x.startswith("[답변]"))
-    assert "토큰 입력 30 (+캐시 읽기 3500) / 출력 13" in line
+    assert a["total_cache_creation_tokens"] == 3500
+    assert "토큰 입력 30 (+캐시 읽기 3500 · 캐시 쓰기 3500) / 출력 13" in line
 
 
 def test_evaluate_answers_handles_errors_and_wrong_block():

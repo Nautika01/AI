@@ -11,7 +11,8 @@ from .base import BackendError, OnText, OnTool, TurnResult, to_jsonable
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens")
+# cache_read 는 캐시에서 읽은 입력(약 0.1배 단가), cache_creation 은 캐시에 새로 쓴 입력(약 1.25배 단가). 둘 다 input_tokens 에 포함되지 않는다.
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 REFUSAL_PLACEHOLDER = "(안전 정책에 따라 답변하지 않음)"
 EMPTY_PLACEHOLDER = "(응답 없음)"
 
