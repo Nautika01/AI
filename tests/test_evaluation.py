@@ -29,9 +29,10 @@ def test_load_cases_validation(tmp_path):
 def test_sample_question_set_retrieval(store):
     cases = load_cases(ROOT / "data" / "eval" / "questions.jsonl")
     r = evaluate_retrieval(store, cases, k=4)
-    assert r["cases"] == 18 and r["hit_at_k"] >= 0.9 and r["mrr"] >= 0.85
+    assert r["cases"] == 21 and r["hit_at_k"] >= 0.9 and r["mrr"] >= 0.85
     skipped = [x for x in r["results"] if x["skipped"]]
-    assert {x["id"] for x in skipped} == {"q14", "q15", "q19", "q20"}  # 도구 질문·차단 질문은 검색 평가 제외
+    # 도구 질문·차단 질문·지식 베이스 밖 질문(expected_refs 없음)은 검색 평가 제외
+    assert {x["id"] for x in skipped} == {"q14", "q15", "q19", "q20", "q23", "q24", "q25", "q27", "q28", "q29", "q30", "q31", "q32", "q33", "q34", "q35"}
 
 
 def test_retrieval_metrics_math(store):
