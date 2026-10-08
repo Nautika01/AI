@@ -20,15 +20,16 @@ from .units import convert_units
 
 
 def build_tools(store: DocumentStore, glossary: dict[str, dict[str, str]]) -> list[BetaFunctionTool[Any]]:
-    def search_defense_docs(query: str, top_k: int = 4) -> str:
+    def search_defense_docs(query: str, top_k: int = 4, category: str | None = None) -> str:
         """부대 지식 베이스(규정·지침·교범 요약 문서)를 검색한다. 절차·규정·양식·용어에 대한 질문이면 답하기 전에 먼저 호출하라.
 
         Args:
             query: 검색어. 한국어 또는 영문 약어. 핵심 명사 위주로 짧게 작성.
             top_k: 반환할 문서 청크 수 (1~8).
+            category: 문서 분류로 범위를 좁힐 때만 지정 (예: 규정, 교범, 지침). 보통은 비워 둔다.
         """
         top_k = max(1, min(int(top_k), 8))
-        hits = store.search(query, top_k=top_k)
+        hits = store.search(query, top_k=top_k, category=category or None)
         return store.format_hits(hits)
 
     def lookup_military_term(term: str) -> str:

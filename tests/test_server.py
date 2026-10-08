@@ -38,7 +38,7 @@ def login(client, username, password):
 
 
 def test_public_endpoints(client):
-    assert client.get("/health").json() == {"status": "ok", "version": "0.2.0"}
+    assert client.get("/health").json() == {"status": "ok", "version": "0.3.0"}
     r = client.get("/")
     assert r.status_code == 200 and "국방 특화 AI 비서" in r.text
 

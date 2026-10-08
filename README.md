@@ -8,7 +8,9 @@ Claude API 위에 구축한 **국방 업무 특화 생성형 AI 비서**입니�
 
 | 영역 | 내용 |
 |---|---|
-| 지식 베이스 질의응답 (RAG) | `data/docs/` 의 Markdown 문서를 BM25로 검색해 출처와 함께 답변. 외부 임베딩·벡터 DB 불필요 → 망 분리 환경 적합 |
+| 지식 베이스 질의응답 (RAG) | `data/docs/` 의 Markdown 문서를 하이브리드(BM25 + 임베딩) 검색해 출처와 함께 답변. 동의어 사전, 머리말 메타데이터(분류·시행일) 필터. 기본 설정은 외부 서비스·모델 다운로드 없이 동작 |
+| 문서 적재 | `defense-ai ingest` 로 HWP·HWPX·DOCX·PDF 를 조문/번호 제목 단위 Markdown 으로 변환 (표 포함) |
+| 평가 | `defense-ai eval` 로 질문셋에 대한 검색 적중률(hit@k, MRR)과 답변 통과율을 측정하고 이전 결과와 비교 |
 | 보고서 작성 지원 | SITREP, SPOTREP(SALUTE), 9-Line MEDEVAC, WARNORD, OPORD 양식 생성·채움 |
 | 군사 도구 | 일시군(DTG) 시간대 변환(I/Z 등), 현재 DTG, NATO 음성 문자, 단위 변환(밀↔도, 노트↔km/h 등), 군사 약어 사전(56개) |
 | 비밀 등급 게이트 | I·II·III급 비밀, 대외비, TOP SECRET/SECRET/CONFIDENTIAL 등 표기를 탐지해 허용 등급 초과 시 **모델 호출 전 차단** |
@@ -50,10 +52,14 @@ defense_assistant/
 ├── storage.py        SQLite 저장소 (사용자·토큰·대화 세션)
 ├── static/index.html 웹 채팅 UI
 ├── security/         classification.py(등급 탐지) · redaction.py(마스킹) · audit.py(감사 로그)
-├── knowledge/        tokenizer.py(한국어 바이그램) · store.py(BM25)
+├── knowledge/        tokenizer.py · store.py(하이브리드 검색) · embeddings.py · synonyms.py · metadata.py
+├── ingest/           extract.py(HWP/HWPX/DOCX/PDF 추출) · convert.py(조문·번호 제목 구조화)
+├── evaluation/       runner.py(검색·답변 평가, 결과 비교)
 └── tools/            Claude 도구 정의 (@beta_tool) 와 순수 함수 구현
 data/docs/            샘플 지식 베이스 (Markdown)
 data/glossary.json    군사 약어 사전
+data/synonyms.json    검색 동의어 사전
+data/eval/            평가 질문셋
 tests/                단위·통합 테스트 (네트워크 불필요)
 ```
 
@@ -93,8 +99,17 @@ REPL 명령: `/help`, `/reset`, `/docs <검색어>`, `/status`, `/exit`
 
 ### 지식 베이스 검색만
 ```bash
-defense-ai search "9라인 메데박" --top-k 3
+defense-ai search "9라인 메데박" --top-k 3 --category 규정
 ```
+
+### 문서 적재와 평가
+```bash
+defense-ai ingest 규정집/ --category 규정 --dry-run   # HWP/HWPX/DOCX/PDF → Markdown 미리보기
+defense-ai ingest 규정집/ --category 규정
+defense-ai eval                                       # 검색 평가 (무료)
+defense-ai eval --answers --out eval/today.json --compare eval/base.json
+```
+자세한 절차는 [docs/문서적재.md](docs/문서적재.md), [docs/평가.md](docs/평가.md)를 참고하십시오.
 
 ### 웹 서비스 / HTTP API (다중 사용자)
 ```bash
@@ -148,6 +163,8 @@ print(result.tools_called, result.usage)
 | `DAI_DOCS_DIR` | `data/docs` | 지식 베이스 디렉터리 |
 | `DAI_GLOSSARY_PATH` | `data/glossary.json` | 약어 사전 |
 | `DAI_AUDIT_LOG` | `audit/audit.jsonl` | 감사 로그 경로 |
+| `DAI_EMBEDDINGS` | `hash` | 의미 검색 `hash`(모델 불필요) / `openai`(임베딩 서버) / `off`. 관련 항목은 [docs/문서적재.md](docs/문서적재.md) |
+| `DAI_SYNONYMS_PATH` / `DAI_INDEX_CACHE_DIR` | `data/synonyms.json` / `storage/index` | 동의어 사전, 임베딩 캐시 |
 | `DAI_DB_PATH` | `storage/defense.db` | 사용자·토큰·대화 기록 DB (서버) |
 | `DAI_TOKEN_TTL_HOURS` | `12` | 로그인 토큰 유효 시간 (서버) |
 | `DAI_LOGIN_MAX_ATTEMPTS` / `DAI_LOGIN_LOCKOUT_MINUTES` | `5` / `10` | 로그인 실패 잠금 (서버) |
@@ -158,7 +175,7 @@ print(result.tools_called, result.usage)
 
 ## 지식 베이스 추가
 
-`data/docs/` 에 UTF-8 Markdown을 넣으면 재시작 시 자동 색인됩니다. 첫 줄 `# 제목`이 문서 제목, `## 소제목` 단위가 검색 청크가 됩니다. 비밀·대외비 표기가 있는 자료는 적재하지 마십시오. 약어는 `data/glossary.json`에 `{"약어": {"full": ..., "ko": ..., "desc": ...}}` 형식으로 추가합니다.
+`data/docs/` 에 UTF-8 Markdown을 넣으면 재시작 시 자동 색인됩니다. 첫 줄 `# 제목`이 문서 제목, `## 소제목` 단위가 검색 청크가 되며, 맨 위 `---` 머리말에 `category`, `effective_date`, `version`, `tags` 를 적을 수 있습니다. HWP·PDF 등 원본은 `defense-ai ingest` 로 변환합니다. 비밀·대외비 표기가 있는 자료는 적재하지 마십시오. 약어는 `data/glossary.json`, 검색 동의어는 `data/synonyms.json` 에 추가합니다.
 
 ## 보안 설계 메모
 
@@ -173,7 +190,7 @@ print(result.tools_called, result.usage)
 ## 테스트
 
 ```bash
-pytest          # 82개 테스트, 네트워크·API 키 불필요
+pytest          # 112개 테스트, 네트워크·API 키 불필요
 ```
 가짜 툴 러너로 전체 처리 흐름(등급 차단, 마스킹, 도구 실행, 폴백 감지, 거부 처리, SSE 스트리밍)과 인증·세션 영속화·관리자 API를 검증합니다. 로컬 백엔드는 OpenAI 호환 규격을 흉내 낸 시험 서버를 실제 포트에 띄워 스트리밍·함수 호출·미지원 서버 자동 전환을 검증합니다.
 
@@ -181,6 +198,7 @@ pytest          # 82개 테스트, 네트워크·API 키 불필요
 
 - 비밀 *표기* 탐지만 수행하며 내용 기반 비밀성 판단은 하지 않습니다.
 - 로컬 모델 백엔드는 실제 모델 서버가 아닌 규격 시험 서버로 검증했습니다. 실제 서버에서는 `defense-ai local-check`로 확인이 필요하며, 모델 품질은 크기와 종류에 따라 크게 다릅니다.
-- BM25 키워드 검색이므로 의미적으로 유사하지만 어휘가 다른 질의는 놓칠 수 있습니다. 망 분리 환경용 로컬 임베딩 모델 결합을 고려할 수 있습니다.
+- 기본 설정(해시 벡터)은 동의어를 스스로 알지 못합니다. 동의어 사전을 채우거나 임베딩 서버(`DAI_EMBEDDINGS=openai`)를 붙여야 어휘가 다른 질의를 잡습니다.
+- HWP 변환은 규격 기반 구현을 합성 파일로 검증했습니다. 실제 파일은 버전이 다양하므로 결과를 확인하고, 이상하면 HWPX 로 저장해 변환하십시오.
 - 서버는 단일 인스턴스 기준입니다(SQLite, 메모리 잠금). 여러 대로 늘리려면 저장소를 PostgreSQL 등으로 바꾸고 로그인 잠금을 공유 저장소로 옮겨야 합니다.
 - 전송 구간 암호화(HTTPS)는 리버스 프록시에서 처리해야 하며, 감사 로그 보안 저장은 배포 환경에서 추가해야 합니다.

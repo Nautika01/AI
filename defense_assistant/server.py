@@ -84,7 +84,7 @@ def _parse_clearance(value: str) -> Classification:
 
 
 def create_app(assistant: DefenseAssistant | None = None, db: Database | None = None) -> FastAPI:
-    app = FastAPI(title="국방 특화 생성형 AI 비서", version="0.2.0")
+    app = FastAPI(title="국방 특화 생성형 AI 비서", version="0.3.0")
     session_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
     state: dict[str, Any] = {"assistant": assistant, "db": db, "throttle": None}
 

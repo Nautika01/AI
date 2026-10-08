@@ -5,6 +5,9 @@
     defense-ai search "거수자 조치"
     defense-ai serve --port 8000
     defense-ai local-check     # 로컬 모델 서버(DAI_BACKEND=local) 연결 점검
+    defense-ai ingest 규정.hwp 교범폴더/ --category 규정   # HWP/HWPX/DOCX/PDF → data/docs/*.md
+    defense-ai eval                      # 검색 평가 (모델 호출 없음)
+    defense-ai eval --answers --out r.json --compare prev.json   # 답변까지 평가하고 이전과 비교
     defense-ai users add kim --role user --clearance RESTRICTED
     defense-ai users list | passwd kim | disable kim | enable kim | remove kim
 """
@@ -18,7 +21,7 @@ import sys
 from pathlib import Path
 
 from .assistant import AssistantError, DefenseAssistant
-from .config import Settings
+from .config import Settings, build_store
 
 HELP = """명령:
   /help           도움말
@@ -126,10 +129,8 @@ def run_chat(args: argparse.Namespace) -> int:
 
 def run_search(args: argparse.Namespace) -> int:
     settings = _build_settings(args)
-    from .knowledge import DocumentStore
-
-    store = DocumentStore.from_directory(settings.docs_dir)
-    print(store.format_hits(store.search(args.query, top_k=args.top_k)))
+    store = build_store(settings)
+    print(store.format_hits(store.search(args.query, top_k=args.top_k, category=args.category)))
     return 0
 
 
@@ -157,14 +158,13 @@ def run_local_check(args: argparse.Namespace) -> int:
     """로컬 모델 서버 연결·모델 존재·짧은 응답을 차례로 점검한다."""
     from .backends import BackendError
     from .backends.local import LocalBackend
-    from .knowledge import DocumentStore
     from .prompts import build_local_system_prompt
     from .tools import build_tools
     from .tools.glossary import load_glossary
 
     settings = _build_settings(args)
     settings.backend = "local"
-    store = DocumentStore.from_directory(settings.docs_dir)
+    store = build_store(settings)
     backend = LocalBackend(settings, build_tools(store, load_glossary(settings.glossary_path)), store, build_local_system_prompt(store.titles))
     print(f"[1/3] 서버 연결: {settings.local_base_url}")
     try:
@@ -189,6 +189,83 @@ def run_local_check(args: argparse.Namespace) -> int:
     print(f"  ✔ 응답 수신 ({len(turn.text)}자, 도구 {turn.tools_called}, 함수 호출 지원: {'예' if backend._tools_supported else '아니오/미확인'})")
     print(f"  ▶ {preview[:200]}{'…' if len(preview) > 200 else ''}")
     print("점검 완료. .env 에 DAI_BACKEND=local 을 설정하면 이 모델로 동작합니다.")
+    return 0
+
+
+def run_ingest(args: argparse.Namespace) -> int:
+    from .ingest import ingest_paths
+
+    settings = _build_settings(args)
+    out_dir = Path(args.out) if args.out else settings.docs_dir
+    tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    results = ingest_paths(args.paths, out_dir, category=args.category or "", effective_date=args.effective_date or "", version=args.version or "", tags=tags, title=args.title, overwrite=args.overwrite, dry_run=args.dry_run)
+    ok = sum(1 for r in results if r.ok and not r.skipped)
+    for r in results:
+        if r.error:
+            print(f"✖ {r.source}: {r.error}")
+        elif r.skipped:
+            print(f"– {r.source}: 이미 있음 → {r.output} (--overwrite 로 덮어쓰기)")
+        else:
+            d = r.doc
+            mode = {"article": "조문", "numbered": "번호 제목", "plain": "구조 없음"}[d.mode]
+            print(f"✔ {r.source} ({d.format}, 문단 {d.paragraphs}개, 섹션 {d.section_count}개, {mode}) → {r.output}{' [미리보기]' if args.dry_run else ''}")
+            if args.dry_run:
+                for name, ps in d.sections[:12]:
+                    print(f"    ## {name or '(머리말)'}  — {len(ps)}문단")
+                if len(d.sections) > 12:
+                    print(f"    … 섹션 {len(d.sections) - 12}개 더")
+    print(f"완료: 변환 {ok}개, 건너뜀 {sum(1 for r in results if r.skipped)}개, 실패 {sum(1 for r in results if r.error)}개")
+    if ok and not args.dry_run:
+        print("변환된 문서를 열어 제목·섹션이 맞는지 확인하고, 머리말의 effective_date 등을 채운 뒤 비서를 재시작하십시오.")
+    return 0 if not any(r.error for r in results) else 1
+
+
+def run_eval(args: argparse.Namespace) -> int:
+    from .evaluation import EvalReport, compare_reports, evaluate_answers, evaluate_retrieval, load_cases
+
+    settings = _build_settings(args)
+    cases_path = Path(args.cases) if args.cases else Path(settings.docs_dir).parent / "eval" / "questions.jsonl"
+    try:
+        cases = load_cases(cases_path)
+    except (OSError, ValueError) as e:
+        print(f"✖ 질문셋을 읽을 수 없습니다: {e}", file=sys.stderr)
+        return 1
+    if args.category:
+        cases = [c for c in cases if c.category == args.category]
+    if args.limit:
+        cases = cases[: args.limit]
+    print(f"질문 {len(cases)}개 ({cases_path})")
+
+    store = build_store(settings)
+    retrieval = evaluate_retrieval(store, cases, k=args.k)
+    answers = None
+    model = "(검색만)"
+    if args.answers:
+        assistant = DefenseAssistant(settings, store=store)
+        model = assistant.model_label
+        print(f"답변 평가 시작: 모델 {model}, 질문 {len(cases)}개 (각 질문은 새 세션)")
+
+        def ask(q: str):
+            return assistant.chat(assistant.new_session("eval"), q)
+
+        def progress(i: int, n: int, r) -> None:
+            mark = "✔" if r.passed else "✖"
+            print(f"  {mark} [{i}/{n}] {r.id} {r.seconds}s" + (f"  오류: {r.error}" if r.error else ""))
+
+        answers = evaluate_answers(ask, cases, on_progress=progress)
+
+    report = EvalReport.build(str(cases_path), model, retrieval, answers)
+    print("\n".join(report.summary_lines()))
+    if args.out:
+        print(f"결과 저장: {report.save(args.out)}")
+    if args.compare:
+        try:
+            before = EvalReport.load(args.compare)
+        except (OSError, ValueError) as e:
+            print(f"✖ 비교 대상을 읽을 수 없습니다: {e}", file=sys.stderr)
+            return 1
+        print("\n[이전 결과와 비교]")
+        print("\n".join(compare_reports(before, report)))
     return 0
 
 
@@ -267,12 +344,33 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("search", help="지식 베이스 검색")
     s.add_argument("query")
     s.add_argument("--top-k", type=int, default=4)
+    s.add_argument("--category", help="문서 분류(front matter category)로 필터")
 
     v = sub.add_parser("serve", help="HTTP API 서버 실행")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8000)
 
     sub.add_parser("local-check", help="로컬 모델 서버 연결 점검")
+
+    g = sub.add_parser("ingest", help="HWP/HWPX/DOCX/PDF/TXT 문서를 지식 베이스 Markdown 으로 변환")
+    g.add_argument("paths", nargs="+", help="파일 또는 폴더")
+    g.add_argument("--out", help="출력 폴더 (기본: DAI_DOCS_DIR)")
+    g.add_argument("--category", help="문서 분류 (예: 규정, 교범, 지침)")
+    g.add_argument("--effective-date", help="시행일 (YYYY-MM-DD)")
+    g.add_argument("--version", help="문서 버전")
+    g.add_argument("--tags", help="태그, 쉼표 구분")
+    g.add_argument("--title", help="문서 제목 (파일 1개일 때만)")
+    g.add_argument("--overwrite", action="store_true", help="같은 이름의 .md 가 있으면 덮어쓰기")
+    g.add_argument("--dry-run", action="store_true", help="저장하지 않고 구조만 미리보기")
+
+    e = sub.add_parser("eval", help="질문셋으로 검색·답변 품질 평가")
+    e.add_argument("--cases", help="질문셋 JSONL (기본: data/eval/questions.jsonl)")
+    e.add_argument("--answers", action="store_true", help="모델을 호출해 답변까지 평가 (비용 발생)")
+    e.add_argument("--k", type=int, default=4, help="검색 평가 시 상위 k")
+    e.add_argument("--category", help="질문셋의 category 로 필터")
+    e.add_argument("--limit", type=int, help="앞에서부터 N개만")
+    e.add_argument("--out", help="결과 JSON 저장 경로")
+    e.add_argument("--compare", help="비교할 이전 결과 JSON")
 
     u = sub.add_parser("users", help="사용자 관리")
     usub = u.add_subparsers(dest="users_command")
@@ -312,6 +410,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_users(args)
     if args.command == "local-check":
         return run_local_check(args)
+    if args.command == "ingest":
+        return run_ingest(args)
+    if args.command == "eval":
+        return run_eval(args)
     parser.print_help()
     return 1
 

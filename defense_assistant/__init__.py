@@ -4,4 +4,4 @@ from .assistant import AssistantError, ChatResult, DefenseAssistant, Session
 from .config import Settings
 
 __all__ = ["AssistantError", "ChatResult", "DefenseAssistant", "Session", "Settings"]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

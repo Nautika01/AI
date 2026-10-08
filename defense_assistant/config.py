@@ -28,6 +28,13 @@ class Settings:
     docs_dir: Path = field(default_factory=lambda: Path("data/docs"))
     glossary_path: Path = field(default_factory=lambda: Path("data/glossary.json"))
     audit_log: Path = field(default_factory=lambda: Path("audit/audit.jsonl"))
+    # --- 검색 ---
+    synonyms_path: Path = field(default_factory=lambda: Path("data/synonyms.json"))
+    index_cache_dir: Path = field(default_factory=lambda: Path("storage/index"))
+    embeddings: str = "hash"  # "hash"(모델 불필요) | "openai"(Ollama 등 /v1/embeddings) | "off"(BM25만)
+    embeddings_base_url: str = "http://127.0.0.1:11434/v1"
+    embeddings_model: str = "nomic-embed-text"
+    embeddings_api_key: str | None = None
     # --- 서버 운영 ---
     db_path: Path = field(default_factory=lambda: Path("storage/defense.db"))
     token_ttl_hours: float = 12.0
@@ -55,6 +62,8 @@ class Settings:
             raise ValueError("DAI_MAX_TOKENS must be >= 256")
         if self.max_iterations < 1:
             raise ValueError("DAI_MAX_ITERATIONS must be >= 1")
+        if self.embeddings not in {"hash", "openai", "off"}:
+            raise ValueError("DAI_EMBEDDINGS must be 'hash', 'openai' or 'off'")
         if self.backend not in {"claude", "local"}:
             raise ValueError("DAI_BACKEND must be 'claude' or 'local'")
         if self.local_tools not in {"auto", "off"}:
@@ -87,6 +96,12 @@ class Settings:
             docs_dir=_path("DAI_DOCS_DIR", "data/docs"),
             glossary_path=_path("DAI_GLOSSARY_PATH", "data/glossary.json"),
             audit_log=_path("DAI_AUDIT_LOG", "audit/audit.jsonl"),
+            synonyms_path=_path("DAI_SYNONYMS_PATH", "data/synonyms.json"),
+            index_cache_dir=_path("DAI_INDEX_CACHE_DIR", "storage/index"),
+            embeddings=os.environ.get("DAI_EMBEDDINGS", "hash").strip().lower(),
+            embeddings_base_url=os.environ.get("DAI_EMBEDDINGS_BASE_URL", os.environ.get("DAI_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1")),
+            embeddings_model=os.environ.get("DAI_EMBEDDINGS_MODEL", "nomic-embed-text"),
+            embeddings_api_key=os.environ.get("DAI_EMBEDDINGS_API_KEY") or os.environ.get("DAI_LOCAL_API_KEY") or None,
             db_path=_path("DAI_DB_PATH", "storage/defense.db"),
             token_ttl_hours=float(os.environ.get("DAI_TOKEN_TTL_HOURS", "12")),
             login_max_attempts=int(os.environ.get("DAI_LOGIN_MAX_ATTEMPTS", "5")),
@@ -101,3 +116,20 @@ class Settings:
             local_timeout=float(os.environ.get("DAI_LOCAL_TIMEOUT", "300")),
             local_temperature=float(os.environ.get("DAI_LOCAL_TEMPERATURE", "0.2")),
         )
+
+
+def build_store(settings: Settings):
+    """설정에 맞는 DocumentStore 를 만든다 (동의어·임베딩·캐시 포함)."""
+    from .knowledge import DocumentStore, OpenAIEmbedder, SynonymMap
+
+    embedder: object = None
+    if settings.embeddings == "off":
+        embedder = False
+    elif settings.embeddings == "openai":
+        embedder = OpenAIEmbedder(settings.embeddings_base_url, settings.embeddings_model, settings.embeddings_api_key)
+    return DocumentStore.from_directory(
+        settings.docs_dir,
+        synonyms=SynonymMap.load(settings.synonyms_path),
+        embedder=embedder,  # type: ignore[arg-type]
+        cache_dir=settings.index_cache_dir,
+    )
