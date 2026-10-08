@@ -7,7 +7,7 @@
 {"id": "q05", "question": "SITREP 항목이 뭐야?", "expected_refs": ["상황보고"], "expected_keywords": ["적", "아군", "전투력|인원"], "category": "보고"}
 {"id": "q06", "question": "첩보보고 SALUTE 형식 설명해줘", "expected_refs": ["첩보보고"], "expected_keywords": ["규모", "활동", "위치", "시각", "장비"], "category": "보고"}
 {"id": "q07", "question": "9라인 메데박 항목", "expected_refs": ["9-Line MEDEVAC"], "expected_keywords": ["좌표|위치", "주파수", "긴급"], "category": "보고"}
-{"id": "q08", "question": "환자 후송 요청할 때 먼저 보내야 하는 항목은?", "expected_refs": ["9-Line MEDEVAC", "후송 요청 요령"], "expected_keywords": ["1", "5"], "category": "보고"}
+{"id": "q08", "question": "환자 후송 요청할 때 먼저 보내야 하는 항목은?", "expected_refs": ["9-Line MEDEVAC", "후송 요청 요령"], "expected_keywords": ["좌표|위치", "주파수|호출부호", "긴급", "장비"], "category": "보고"}
 {"id": "q09", "question": "작전명령 5단락 구성", "expected_refs": ["5단락 작전명령"], "expected_keywords": ["상황", "임무", "실시", "전투근무지원", "지휘"], "category": "작전"}
 {"id": "q10", "question": "METT-TC가 뭐야", "expected_refs": ["METT-TC"], "expected_keywords": ["임무", "적", "지형", "시간", "민간"], "category": "작전"}
 {"id": "q11", "question": "1/3 2/3 원칙 설명", "expected_refs": ["1/3"], "expected_keywords": ["준비", "예하"], "category": "작전"}

@@ -65,12 +65,12 @@ def build_tools(store: DocumentStore, glossary: dict[str, dict[str, str]]) -> li
         """
         return phonetic_spell(text)
 
-    def generate_report_template(kind: str, fields: dict[str, str] | None = None) -> str:
+    def generate_report_template(kind: str, fields: dict[str, Any] | str | None = None) -> str:
         """표준 보고서 양식을 만든다. 종류: SITREP, SPOTREP(SALUTE), MEDEVAC(9-line), WARNORD, OPORD. 사용자가 준 정보는 fields로 채운다.
 
         Args:
             kind: 보고서 종류 (SITREP / SPOTREP / MEDEVAC / WARNORD / OPORD, 한글 명칭도 가능).
-            fields: 채워 넣을 항목. 키는 양식 필드명(SITREP: unit, dtg, enemy, friendly, personnel, equipment, supply, assessment; SPOTREP: size, activity, location, unit, time, equipment, observer; MEDEVAC: line1~line9; WARNORD/OPORD: situation, mission, execution, service_support, command_signal).
+            fields: 채워 넣을 항목(객체 또는 JSON 문자열, 값은 문자열·숫자 모두 가능). 키는 양식 필드명(SITREP: unit, dtg, enemy, friendly, personnel, equipment, supply, assessment; SPOTREP: size, activity, location, unit, time, equipment, observer; MEDEVAC: line1~line9; WARNORD/OPORD: situation, mission, execution, service_support, command_signal).
         """
         return render_report(kind, fields)
 

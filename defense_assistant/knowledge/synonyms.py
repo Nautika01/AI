@@ -12,7 +12,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 class SynonymMap:
@@ -29,7 +32,12 @@ class SynonymMap:
         p = Path(path)
         if not p.exists():
             return cls()
-        data = json.loads(p.read_text(encoding="utf-8"))
+        try:
+            # utf-8-sig: 메모장 등에서 BOM 을 붙여 저장한 파일도 읽는다
+            data = json.loads(p.read_text(encoding="utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            log.warning("동의어 사전(synonyms.json)을 읽지 못해 동의어 확장 없이 계속합니다: %s (%s)", p, e)
+            return cls()
         if not isinstance(data, dict):
             raise ValueError("synonyms.json 은 {단어: [동의어, ...]} 형식이어야 합니다.")
         return cls({k: list(v) if isinstance(v, list) else [str(v)] for k, v in data.items()})

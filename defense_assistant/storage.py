@@ -204,11 +204,22 @@ class Database:
         return cur.rowcount
 
     # ---- 세션 ----------------------------------------------------------
-    def save_session(self, session: Session, *, title: str | None = None) -> None:
+    def save_session(self, session: Session, *, title: str | None = None, create: bool = True) -> bool:
+        """세션을 저장하고 저장 여부를 돌려준다.
+
+        `create=False` 이면 이미 있는 행만 갱신한다. 턴 처리 중에 삭제된 대화가 턴 종료 시
+        다시 생기지 않게 하려면 이 방식을 쓴다 (행이 없으면 False).
+        """
         payload = json.dumps(session.messages, ensure_ascii=False)
         if title is None:
             title = _derive_title(session.messages)
         with self._lock:
+            if not create:
+                cur = self._conn.execute(
+                    "UPDATE sessions SET title = ?, messages = ?, turns = ?, updated_at = ? WHERE session_id = ? AND username = ?",
+                    (title, payload, session.turns, _now(), session.session_id, session.user_id),
+                )
+                return cur.rowcount > 0
             self._conn.execute(
                 """INSERT INTO sessions(session_id, username, title, messages, turns, created_at, updated_at)
                    VALUES (?,?,?,?,?,?,?)
@@ -216,6 +227,7 @@ class Database:
                        turns = excluded.turns, updated_at = excluded.updated_at""",
                 (session.session_id, session.user_id, title, payload, session.turns, session.created_at.isoformat(), _now()),
             )
+        return True
 
     def load_session(self, session_id: str, username: str | None = None) -> Session | None:
         with self._lock:
@@ -257,15 +269,33 @@ def _derive_title(messages: list[dict[str, Any]], max_len: int = 40) -> str:
     return ""
 
 
+NO_RESPONSE_TEXT = "(표시할 응답이 없습니다. 안전 정책에 따라 답변이 거부되었을 수 있습니다.)"
+
+
 def transcript(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """저장된 메시지에서 사람이 읽을 사용자/비서 텍스트만 추린다 (도구 호출·사고 블록 제외)."""
+    """저장된 메시지에서 사람이 읽을 사용자/비서 텍스트만 추린다 (도구 호출·사고 블록 제외).
+
+    사용자 질문 하나에 대한 비서 응답(도구 호출 전후의 여러 assistant 메시지)은 실시간 화면처럼
+    말풍선 하나로 합친다. 텍스트 없이 끝난 턴(출력 전 거부 등)은 안내 문구로 표시한다.
+    """
     out: list[dict[str, str]] = []
+    pending: list[str] | None = None  # 진행 중인 턴의 비서 텍스트 조각
+
+    def flush() -> None:
+        if pending is not None:
+            text = "".join(pending)
+            out.append({"role": "assistant", "text": text if text.strip() else NO_RESPONSE_TEXT})
+
     for m in messages:
         content = m.get("content")
         if m.get("role") == "user" and isinstance(content, str):
+            flush()
             out.append({"role": "user", "text": content})
+            pending = []
         elif m.get("role") == "assistant" and isinstance(content, list):
             text = "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-            if text:
-                out.append({"role": "assistant", "text": text})
+            if pending is None:
+                pending = []
+            pending.append(text)
+    flush()
     return out

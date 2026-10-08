@@ -169,6 +169,8 @@ print(result.tools_called, result.usage)
 | `DAI_TOKEN_TTL_HOURS` | `12` | 로그인 토큰 유효 시간 (서버) |
 | `DAI_LOGIN_MAX_ATTEMPTS` / `DAI_LOGIN_LOCKOUT_MINUTES` | `5` / `10` | 로그인 실패 잠금 (서버) |
 | `DAI_CORS_ORIGINS` | (없음) | 허용 출처, 쉼표 구분 (서버) |
+| `DAI_TRUSTED_PROXIES` | (없음) | 리버스 프록시 IP/CIDR. 프록시 뒤 운영 시 필수 (서버) |
+| `DAI_LOCAL_NUM_CTX` / `DAI_LOCAL_MAX_TOKENS` | 4096 / 자동 | 로컬 모델 컨텍스트 길이·응답 상한 |
 | `DAI_ADMIN_PASSWORD` | (없음) | 사용자 0명일 때 admin 자동 생성, 사용 후 제거 (서버) |
 
 모델 호출은 **adaptive thinking + `output_config.effort`**, 시스템 프롬프트 **프롬프트 캐싱**, 스트리밍을 사용합니다. 기본적으로 **서버측 안전장치 폴백**(`fallbacks: "default"`)이 켜져 있어 안전 분류기가 요청을 거부하면 같은 호출 안에서 대체 모델로 재시도합니다. 원치 않으면 `DAI_FALLBACKS=off` 또는 `--no-fallback`으로 끌 수 있습니다.
@@ -190,9 +192,13 @@ print(result.tools_called, result.usage)
 ## 테스트
 
 ```bash
-pytest          # 112개 테스트, 네트워크·API 키 불필요
+pytest          # 328개 테스트, 네트워크·API 키 불필요
 ```
 가짜 툴 러너로 전체 처리 흐름(등급 차단, 마스킹, 도구 실행, 폴백 감지, 거부 처리, SSE 스트리밍)과 인증·세션 영속화·관리자 API를 검증합니다. 로컬 백엔드는 OpenAI 호환 규격을 흉내 낸 시험 서버를 실제 포트에 띄워 스트리밍·함수 호출·미지원 서버 자동 전환을 검증합니다.
+
+## 코드 교차 검토
+
+전체 코드를 11개 관점에서 독립 검토하고 항목마다 검증자 3명이 재현·추적·반론으로 확인했습니다. 확인된 77건을 수정하고 회귀 테스트를 붙였습니다. 목록과 남은 한계는 [docs/검토결과.md](docs/검토결과.md)에 있습니다.
 
 ## 한계와 향후 과제
 
