@@ -4,12 +4,15 @@
     defense-ai chat --user 홍길동
     defense-ai search "거수자 조치"
     defense-ai serve --port 8000
+    defense-ai users add kim --role user --clearance RESTRICTED
+    defense-ai users list | passwd kim | disable kim | enable kim | remove kim
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -131,9 +134,74 @@ def run_serve(args: argparse.Namespace) -> int:
         print("서버 실행에는 `pip install 'defense-assistant[server]'` 가 필요합니다.", file=sys.stderr)
         return 1
     from .server import create_app
+    from .storage import Database
 
-    app = create_app(DefenseAssistant(_build_settings(args)))
+    settings = _build_settings(args)
+    db = Database(settings.db_path)
+    if db.count_users() == 0 and not settings.admin_password:
+        print("등록된 사용자가 없습니다. 먼저 `defense-ai users add <아이디> --role admin` 으로 관리자를 만들거나 DAI_ADMIN_PASSWORD 를 설정하십시오.", file=sys.stderr)
+        return 1
+    app = create_app(DefenseAssistant(settings), db)
+    print(f"서버 시작: http://{args.host}:{args.port}  (사용자 DB: {settings.db_path})")
     uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
+def run_users(args: argparse.Namespace) -> int:
+    from getpass import getpass
+
+    from .security.classification import Classification
+    from .storage import Database
+
+    settings = _build_settings(args)
+    db = Database(settings.db_path)
+
+    def ask_password() -> str:
+        pw = args.password or os.environ.get("DAI_NEW_PASSWORD")
+        if pw:
+            return pw
+        pw1 = getpass("비밀번호 (8자 이상): ")
+        pw2 = getpass("비밀번호 확인: ")
+        if pw1 != pw2:
+            raise SystemExit("비밀번호가 일치하지 않습니다.")
+        return pw1
+
+    try:
+        if args.users_command == "add":
+            u = db.create_user(args.username, ask_password(), role=args.role, clearance=Classification.parse(args.clearance))
+            print(f"생성: {u.username} (역할 {u.role}, 인가 {u.clearance.korean})")
+        elif args.users_command == "list":
+            users = db.list_users()
+            if not users:
+                print("등록된 사용자가 없습니다.")
+            for u in users:
+                print(f"{u.username:20s} {u.role:6s} {u.clearance.korean:8s} {'비활성' if u.disabled else '활성'}  {u.created_at[:19]}")
+        elif args.users_command == "passwd":
+            if not db.set_password(args.username, ask_password()):
+                raise SystemExit("사용자를 찾을 수 없습니다.")
+            print(f"비밀번호 변경: {args.username} (기존 로그인은 모두 무효화됨)")
+        elif args.users_command in {"disable", "enable"}:
+            if not db.update_user(args.username, disabled=(args.users_command == "disable")):
+                raise SystemExit("사용자를 찾을 수 없습니다.")
+            print(f"{'비활성화' if args.users_command == 'disable' else '활성화'}: {args.username}")
+        elif args.users_command == "set":
+            ok = db.update_user(args.username, role=args.role, clearance=Classification.parse(args.clearance) if args.clearance else None)
+            if not ok:
+                raise SystemExit("사용자를 찾을 수 없습니다.")
+            u = db.get_user(args.username)
+            print(f"변경: {u.username} (역할 {u.role}, 인가 {u.clearance.korean})")
+        elif args.users_command == "remove":
+            if not db.delete_user(args.username):
+                raise SystemExit("사용자를 찾을 수 없습니다.")
+            print(f"삭제: {args.username} (대화 기록 포함)")
+        else:
+            print("사용법: defense-ai users {add,list,passwd,set,disable,enable,remove}", file=sys.stderr)
+            return 1
+    except ValueError as e:
+        print(f"오류: {e}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
     return 0
 
 
@@ -157,6 +225,24 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("serve", help="HTTP API 서버 실행")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8000)
+
+    u = sub.add_parser("users", help="사용자 관리")
+    usub = u.add_subparsers(dest="users_command")
+    ua = usub.add_parser("add", help="사용자 추가")
+    ua.add_argument("username")
+    ua.add_argument("--role", choices=["user", "admin"], default="user")
+    ua.add_argument("--clearance", default="RESTRICTED", help="인가 등급: UNCLASSIFIED | RESTRICTED | CONFIDENTIAL | SECRET | TOP_SECRET")
+    ua.add_argument("--password", help="비밀번호 (생략 시 프롬프트, 또는 DAI_NEW_PASSWORD 환경 변수)")
+    usub.add_parser("list", help="사용자 목록")
+    up = usub.add_parser("passwd", help="비밀번호 변경")
+    up.add_argument("username")
+    up.add_argument("--password")
+    us = usub.add_parser("set", help="역할·인가 등급 변경")
+    us.add_argument("username")
+    us.add_argument("--role", choices=["user", "admin"])
+    us.add_argument("--clearance")
+    for name, help_text in (("disable", "계정 비활성화"), ("enable", "계정 활성화"), ("remove", "계정 삭제")):
+        usub.add_parser(name, help=help_text).add_argument("username")
     return p
 
 
@@ -174,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_search(args)
     if args.command == "serve":
         return run_serve(args)
+    if args.command == "users":
+        return run_users(args)
     parser.print_help()
     return 1
 

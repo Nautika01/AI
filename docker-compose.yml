@@ -1,0 +1,11 @@
+services:
+  defense-ai:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env          # ANTHROPIC_API_KEY, DAI_ADMIN_PASSWORD(최초 1회) 등
+    volumes:
+      - ./data/docs:/app/data/docs      # 지식 베이스 문서
+      - ./storage:/app/storage          # 사용자·토큰·대화 기록 DB
+      - ./audit:/app/audit              # 감사 로그
+    restart: unless-stopped

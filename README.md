@@ -14,7 +14,8 @@ Claude API 위에 구축한 **국방 업무 특화 생성형 AI 비서**입니�
 | 비밀 등급 게이트 | I·II·III급 비밀, 대외비, TOP SECRET/SECRET/CONFIDENTIAL 등 표기를 탐지해 허용 등급 초과 시 **모델 호출 전 차단** |
 | 민감정보 마스킹 | 주민등록번호, 군번, 전화번호, 이메일, MGRS·위경도 좌표, 내부망 IP를 자리표시자로 치환한 뒤 전송 |
 | 감사 로그 | 모든 턴을 JSONL로 기록 (원문 대신 SHA-256 해시, 등급 판정, 마스킹 건수, 호출 도구, 토큰 사용량) |
-| 인터페이스 | 터미널 REPL(스트리밍), FastAPI HTTP API(JSON + SSE 스트리밍) |
+| 인터페이스 | 터미널 REPL(스트리밍), 웹 채팅 UI, FastAPI HTTP API(JSON + SSE 스트리밍) |
+| 다중 사용자 | 아이디·비밀번호 로그인(scrypt 해시, 베어러 토큰), 사용자별 비밀취급인가 등급, 대화 기록 SQLite 저장, 관리자 API, 로그인 실패 잠금 |
 
 ## 아키텍처
 
@@ -39,8 +40,11 @@ defense_assistant/
 ├── assistant.py      핵심 처리 흐름 (DefenseAssistant, Session, ChatResult)
 ├── prompts.py        시스템 프롬프트 (프롬프트 캐싱을 위해 가변 값 미포함)
 ├── config.py         환경 변수 설정 (Settings)
-├── cli.py            터미널 REPL / 검색 / 서버 실행
-├── server.py         FastAPI 앱
+├── cli.py            터미널 REPL / 검색 / 서버 실행 / 사용자 관리
+├── server.py         FastAPI 앱 (인증, 세션 영속화, 관리자 API, 웹 UI)
+├── auth.py           비밀번호 해시(scrypt), 토큰, 로그인 실패 제한
+├── storage.py        SQLite 저장소 (사용자·토큰·대화 세션)
+├── static/index.html 웹 채팅 UI
 ├── security/         classification.py(등급 탐지) · redaction.py(마스킹) · audit.py(감사 로그)
 ├── knowledge/        tokenizer.py(한국어 바이그램) · store.py(BM25)
 └── tools/            Claude 도구 정의 (@beta_tool) 와 순수 함수 구현
@@ -88,24 +92,31 @@ REPL 명령: `/help`, `/reset`, `/docs <검색어>`, `/status`, `/exit`
 defense-ai search "9라인 메데박" --top-k 3
 ```
 
-### HTTP API
+### 웹 서비스 / HTTP API (다중 사용자)
 ```bash
-defense-ai serve --host 127.0.0.1 --port 8000
+defense-ai users add admin --role admin      # 관리자 계정 생성 (비밀번호 프롬프트)
+defense-ai serve --host 0.0.0.0 --port 8000  # 브라우저에서 http://서버IP:8000
 ```
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| GET | `/health` | 상태·모델·적재 문서 수 |
-| POST | `/sessions` | 새 세션 `{user_id}` → `{session_id}` |
-| POST | `/chat` | `{message, session_id?, user_id?}` → 응답 JSON |
-| POST | `/chat/stream` | 같은 입력, SSE 스트리밍 (`text` / `tool` / `done` / `error` 이벤트) |
+| POST | `/auth/login` | `{username, password}` → `{token, ...}` 이후 `Authorization: Bearer <token>` |
+| POST | `/auth/logout` · GET `/auth/me` | 토큰 폐기 · 내 정보 |
+| GET/POST | `/sessions` | 내 대화 목록 · 새 대화 |
+| GET/DELETE | `/sessions/{id}` | 대화 내용 조회 · 삭제 (본인 것만) |
+| POST | `/chat` | `{message, session_id?}` → 응답 JSON |
+| POST | `/chat/stream` | 같은 입력, SSE (`session` / `text` / `tool` / `done` / `error`) |
 | GET | `/docs/search?q=` | 지식 베이스 검색 |
-| DELETE | `/sessions/{id}` | 세션 삭제 |
+| GET/POST/PATCH/DELETE | `/admin/users…` | 사용자 관리 (관리자) |
+| GET | `/admin/audit` | 감사 로그 조회 (관리자) |
+| GET | `/health` | 상태 확인 (인증 불필요) |
 
 ```bash
-curl -s localhost:8000/chat -H 'content-type: application/json' \
+TOKEN=$(curl -s localhost:8000/auth/login -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"..."}' | jq -r .token)
+curl -s localhost:8000/chat -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"message":"SPOTREP 양식 만들어 줘. 규모는 차량 3대, 시각 071430IOCT26"}' | jq .text
 ```
-운영 시에는 부대 인증(SSO) 뒤에 배치하고 세션 저장소·감사 로그를 보안 저장소로 교체하십시오.
+Docker 실행, 보안 체크리스트, 사용자 관리 명령 전체는 [docs/운영가이드.md](docs/운영가이드.md)를 참고하십시오.
 
 ### 파이썬에서 직접 사용
 ```python
@@ -132,6 +143,11 @@ print(result.tools_called, result.usage)
 | `DAI_DOCS_DIR` | `data/docs` | 지식 베이스 디렉터리 |
 | `DAI_GLOSSARY_PATH` | `data/glossary.json` | 약어 사전 |
 | `DAI_AUDIT_LOG` | `audit/audit.jsonl` | 감사 로그 경로 |
+| `DAI_DB_PATH` | `storage/defense.db` | 사용자·토큰·대화 기록 DB (서버) |
+| `DAI_TOKEN_TTL_HOURS` | `12` | 로그인 토큰 유효 시간 (서버) |
+| `DAI_LOGIN_MAX_ATTEMPTS` / `DAI_LOGIN_LOCKOUT_MINUTES` | `5` / `10` | 로그인 실패 잠금 (서버) |
+| `DAI_CORS_ORIGINS` | (없음) | 허용 출처, 쉼표 구분 (서버) |
+| `DAI_ADMIN_PASSWORD` | (없음) | 사용자 0명일 때 admin 자동 생성, 사용 후 제거 (서버) |
 
 모델 호출은 **adaptive thinking + `output_config.effort`**, 시스템 프롬프트 **프롬프트 캐싱**, 스트리밍을 사용합니다. 기본적으로 **서버측 안전장치 폴백**(`fallbacks: "default"`)이 켜져 있어 안전 분류기가 요청을 거부하면 같은 호출 안에서 대체 모델로 재시도합니다. 원치 않으면 `DAI_FALLBACKS=off` 또는 `--no-fallback`으로 끌 수 있습니다.
 
@@ -145,18 +161,19 @@ print(result.tools_called, result.usage)
 - 마스킹된 자리표시자는 복원되지 않으며, 시스템 프롬프트가 모델에게 복원 시도를 금지합니다.
 - 감사 로그에는 질문·답변 원문이 아닌 해시와 길이만 저장됩니다. 원문 보존이 필요하면 `AuditRecord`를 확장하고 저장소 암호화를 적용하십시오.
 - 실패한 턴(네트워크 오류 등)은 세션 기록에 남기지 않아 대화 이력이 오염되지 않습니다.
+- 서버 모드에서는 비밀번호를 scrypt로 해시하고 토큰은 SHA-256 해시만 저장합니다. 대화 기록은 마스킹된 상태로 저장되어 민감정보 원문이 DB에 남지 않습니다. 사용자별 인가 등급과 전역 허용 등급 중 낮은 쪽이 적용됩니다.
 - Amazon Bedrock·Vertex AI 등 다른 플랫폼에서 구동하려면 `DefenseAssistant(client=...)`에 해당 플랫폼 클라이언트를 주입하고 `DAI_FALLBACKS=off`로 두십시오.
 
 ## 테스트
 
 ```bash
-pytest          # 57개 테스트, 네트워크·API 키 불필요
+pytest          # 70개 테스트, 네트워크·API 키 불필요
 ```
-가짜 툴 러너로 전체 처리 흐름(등급 차단, 마스킹, 도구 실행, 폴백 감지, 거부 처리, SSE 스트리밍)을 검증합니다.
+가짜 툴 러너로 전체 처리 흐름(등급 차단, 마스킹, 도구 실행, 폴백 감지, 거부 처리, SSE 스트리밍)과 인증·세션 영속화·관리자 API를 검증합니다.
 
 ## 한계와 향후 과제
 
 - 비밀 *표기* 탐지만 수행하며 내용 기반 비밀성 판단은 하지 않습니다.
 - BM25 키워드 검색이므로 의미적으로 유사하지만 어휘가 다른 질의는 놓칠 수 있습니다. 망 분리 환경용 로컬 임베딩 모델 결합을 고려할 수 있습니다.
-- 서버의 세션은 메모리에만 저장됩니다. 다중 인스턴스 운영 시 외부 저장소가 필요합니다.
-- 접근 통제(인증·권한), 전송 구간 암호화, 로그 보안 저장은 배포 환경에서 추가해야 합니다.
+- 서버는 단일 인스턴스 기준입니다(SQLite, 메모리 잠금). 여러 대로 늘리려면 저장소를 PostgreSQL 등으로 바꾸고 로그인 잠금을 공유 저장소로 옮겨야 합니다.
+- 전송 구간 암호화(HTTPS)는 리버스 프록시에서 처리해야 하며, 감사 로그 보안 저장은 배포 환경에서 추가해야 합니다.
