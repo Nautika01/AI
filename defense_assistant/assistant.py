@@ -142,21 +142,30 @@ class DefenseAssistant:
         max_level = self.effective_max_classification(session)
         if not classification.allowed_under(max_level):
             text = block_message(classification, max_level)
-            self.audit.write(AuditRecord(event="blocked", detail="classification_marking", **base))
+            self._audit(AuditRecord(event="blocked", detail="classification_marking", **base))
             return ChatResult(text=text, blocked=True, classification=classification, redaction=RedactionResult(text=user_text))
 
         # 2) 민감정보 마스킹
         redaction = redact(user_text, enabled=self.settings.redaction == "mask")
 
-        # 3) 모델 호출
+        # 3) 모델 호출 — 감사 로그를 쓸 수 없으면 모델을 호출하지 않는다(fail-closed)
+        self._audit_preflight()
+        history_len = len(session.messages)
         session.messages.append({"role": "user", "content": redaction.text})
         try:
             turn = self.backend.run(session.messages, user_text=redaction.text, on_text=on_text, on_tool=on_tool)
         except BackendError as e:
-            session.messages.pop()  # 실패한 턴은 기록에 남기지 않는다
+            del session.messages[history_len:]  # 실패한 턴은 기록에 남기지 않는다
             cause = e.__cause__
-            self.audit.write(AuditRecord(event="error", redactions=redaction.counts, detail=f"{type(cause).__name__ if cause else 'BackendError'}: {e}", **base))
+            try:
+                self._audit(AuditRecord(event="error", redactions=redaction.counts, detail=f"{type(cause).__name__ if cause else 'BackendError'}: {e}", **base))
+            except AssistantError as audit_err:
+                raise AssistantError(f"{e} / {audit_err}") from e
             raise AssistantError(str(e)) from e
+        except BaseException:
+            # Ctrl-C 등으로 중단된 턴도 응답 없는 질문이 기록에 남지 않도록 되돌린다.
+            del session.messages[history_len:]
+            raise
         session.messages.extend(turn.new_messages)
         session.turns += 1
 
@@ -166,6 +175,8 @@ class DefenseAssistant:
             text = "요청하신 내용은 안전 정책에 따라 답변할 수 없습니다." + (f" (사유: {turn.refusal_detail})" if turn.refusal_detail else "") + " 질문을 바꾸어 다시 문의해 주십시오."
         elif turn.stop_reason == "max_tokens":
             text += "\n\n(응답이 최대 길이에 도달해 잘렸습니다. 이어서 답하도록 요청해 주십시오.)"
+        elif turn.stop_reason == "model_context_window_exceeded":
+            text += "\n\n(대화 길이가 모델 한도에 도달해 답변이 잘렸습니다. 새 대화를 시작하십시오.)"
         elif turn.stop_reason == "tool_use":
             text += "\n\n(도구 호출 횟수 한도에 도달해 중단했습니다. 질문을 나눠서 다시 요청해 주십시오.)"
 
@@ -181,8 +192,8 @@ class DefenseAssistant:
             usage=dict(turn.usage),
         )
 
-        # 5) 감사 로그
-        self.audit.write(AuditRecord(
+        # 5) 감사 로그 — 기록에 실패하면 이번 턴을 되돌리고 오류로 알린다
+        record = AuditRecord(
             event="chat",
             redactions=redaction.counts,
             tools_called=turn.tools_called,
@@ -195,5 +206,32 @@ class DefenseAssistant:
             output_sha256=sha256_text(text),
             output_chars=len(text),
             **base,
-        ))
+        )
+        try:
+            self._audit(record)
+        except AssistantError:
+            del session.messages[history_len:]
+            session.turns -= 1
+            raise
         return result
+
+    # ------------------------------------------------------------------
+    def _audit(self, record: AuditRecord) -> None:
+        """감사 기록을 남긴다. 파일 쓰기 실패는 한국어 메시지의 AssistantError 로 바꾼다."""
+        try:
+            self.audit.write(record)
+        except OSError as e:
+            log.error("감사 로그 기록 실패: %s", e)
+            raise AssistantError(f"감사 로그를 기록할 수 없어 요청을 처리하지 못했습니다. 관리자에게 문의하십시오. ({type(e).__name__}: {e.strerror or e})") from e
+
+    def _audit_preflight(self) -> None:
+        """모델 호출 전에 감사 로그 파일을 열 수 있는지 확인한다(폴더 삭제·권한 문제 조기 탐지)."""
+        path = getattr(self.audit, "path", None)
+        if not path:
+            return
+        try:
+            with open(path, "a", encoding="utf-8"):
+                pass
+        except OSError as e:
+            log.error("감사 로그 파일을 열 수 없음: %s", e)
+            raise AssistantError(f"감사 로그를 기록할 수 없어 요청을 처리하지 않았습니다. 관리자에게 문의하십시오. ({type(e).__name__}: {e.strerror or e})") from e
