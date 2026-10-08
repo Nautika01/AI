@@ -246,3 +246,51 @@ def test_redact_preserves_unmatched_original_characters():
     text = "Ⅱ분기 ＡＢＣ 보고 010-1234-5678"
     r = redact(text)
     assert r.text == "Ⅱ분기 ＡＢＣ 보고 [휴대전화]"
+
+
+# --- 등급 표기: 등급 용어 자체를 묻는 교육용 질문 (평가 q18 오차단) ------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "II급 비밀이 뭐야",
+        "II급 비밀이 뭐야?",
+        "Ⅱ급 비밀이란？",
+        "2급비밀 뜻",
+        "III급 비밀의 정의가 뭔가요?",
+        "I급 비밀과 II급 비밀 차이",
+        "1급 비밀, 2급 비밀, 3급 비밀 구분",
+        "II급 비밀은 무엇입니까?",
+    ],
+)
+def test_classify_concept_question_not_marked(text):
+    assert classify_text(text).level == Classification.UNCLASSIFIED
+
+
+@pytest.mark.parametrize(
+    "text,level",
+    [
+        # 질문 외의 내용이 붙으면 예외를 적용하지 않는다.
+        ("II급 비밀이 뭐야\n작전계획 세부 내용", Classification.SECRET),
+        ("II급 비밀이란 무엇인가? 아래 문서 참고: ...", Classification.SECRET),
+        ("II급 비밀이 뭐야 TOP SECRET", Classification.TOP_SECRET),
+        ("II급 비밀 문서가 뭐야", Classification.SECRET),
+        ("이 II급 비밀 문서를 요약해 줘", Classification.SECRET),
+        # 술어 없는 단독 표기, '내용을 알려줘' 로도 읽히는 '알려줘' 는 표기로 본다.
+        ("II급 비밀", Classification.SECRET),
+        ("II급 비밀 알려줘", Classification.SECRET),
+    ],
+)
+def test_classify_concept_question_exception_is_narrow(text, level):
+    assert classify_text(text).level == level
+
+
+def test_sample_eval_set_block_expectations_match_gate():
+    # 평가 질문셋의 blocked 기대값과 입력 게이트 판정이 일치해야 한다(모델 호출 없이 확인).
+    from defense_assistant.evaluation import load_cases
+    from tests.conftest import ROOT
+
+    for c in load_cases(ROOT / "data" / "eval" / "questions.jsonl"):
+        blocked = not classify_text(c.question).allowed_under(Classification.RESTRICTED)
+        assert blocked == c.blocked, c.id

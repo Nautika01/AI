@@ -135,6 +135,34 @@ _PATTERNS: list[tuple[Classification, re.Pattern[str]]] = [
 ]
 
 
+# 등급 용어 자체를 묻는 교육용 질문('II급 비밀이 뭐야', 'I급 비밀과 II급 비밀 차이')은 표기가 아니다.
+# 입력 전체가 [등급 용어 + 정의·차이를 묻는 말] 로만 이루어진 경우에만 예외로 둔다(fullmatch).
+# 다른 내용이 한 글자라도 붙으면('II급 비밀 문서 요약해 줘', 'II급 비밀: 작전 계획…') 그대로 차단한다.
+# '알려줘'는 '비밀(내용)을 알려줘' 로도 읽히므로 술어로 받지 않는다.
+_ANY_GRADE = r"(?:III|II|I|[123])"
+_GRADE_TERM = rf"{_ANY_GRADE}\s*급\s*(?:비밀|기밀)"
+_CONCEPT_QUESTION = re.compile(
+    rf"""
+    {_GRADE_TERM}(?:\s*(?:과|와|및|,|하고|이랑|랑)\s*{_GRADE_TERM})*
+    \s*(?:이란|란|이|은|는|의|과|와)?
+    (?:
+        \s*(?:정의|뜻|의미|개념|기준|차이점|차이|구분)
+        \s*(?:이|은|는|가|을|를)?
+        (?:\s*(?:뭐야|뭐예요|뭐에요|뭔가요|뭐지|뭐냐|뭡니까|무엇인가요|무엇입니까|무엇이야|무엇|설명해\s*(?:줘|주세요|주십시오)))?
+      | \s*(?:뭐야|뭐예요|뭐에요|뭔가요|뭐지|뭐냐|뭡니까|무엇인가요|무엇입니까|무엇이야|무엇|설명해\s*(?:줘|주세요|주십시오))
+      | (?<=란)\s*(?=[?])
+    )
+    \s*[?.!]*
+    """,
+    re.VERBOSE,
+)
+
+
+def is_concept_question(text: str) -> bool:
+    """입력 전체가 비밀 등급 용어의 뜻·차이를 묻는 질문뿐인지(표기가 아님) 판단한다."""
+    return _CONCEPT_QUESTION.fullmatch(normalize_for_matching(text).strip()) is not None
+
+
 @dataclass
 class ClassificationResult:
     level: Classification
@@ -154,6 +182,8 @@ def classify_text(text: str) -> ClassificationResult:
     매칭은 정규화 사본(normalize_for_matching)에 대해 수행하므로 markings 에는
     정규화된 표기('Ⅱ급비밀' → 'II급비밀')가 담긴다.
     """
+    if is_concept_question(text):
+        return ClassificationResult(level=Classification.UNCLASSIFIED)
     text = normalize_for_matching(text)
     highest = Classification.UNCLASSIFIED
     markings: list[str] = []
