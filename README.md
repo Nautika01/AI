@@ -16,6 +16,7 @@ Claude API 위에 구축한 **국방 업무 특화 생성형 AI 비서**입니�
 | 감사 로그 | 모든 턴을 JSONL로 기록 (원문 대신 SHA-256 해시, 등급 판정, 마스킹 건수, 호출 도구, 토큰 사용량) |
 | 인터페이스 | 터미널 REPL(스트리밍), 웹 채팅 UI, FastAPI HTTP API(JSON + SSE 스트리밍) |
 | 다중 사용자 | 아이디·비밀번호 로그인(scrypt 해시, 베어러 토큰), 사용자별 비밀취급인가 등급, 대화 기록 SQLite 저장, 관리자 API, 로그인 실패 잠금 |
+| 로컬 모델 (망 분리) | `DAI_BACKEND=local` 로 Ollama·vLLM·llama.cpp 등 OpenAI 호환 서버 사용. 매 턴 자동 문서 검색(RAG 주입), 함수 호출 자동 감지, `defense-ai local-check` 점검 |
 
 ## 아키텍처
 
@@ -24,7 +25,9 @@ Claude API 위에 구축한 **국방 업무 특화 생성형 AI 비서**입니�
    │
    ├─ 1. 비밀 등급 표기 탐지 ──▶ 허용 등급 초과 → 차단 + 감사 로그 (모델 호출 없음)
    ├─ 2. 민감정보 마스킹      ──▶ [군번], [좌표] 등 자리표시자
-   ├─ 3. Claude 툴 러너 (스트리밍, adaptive thinking, 서버측 안전장치 폴백)
+   ├─ 3. 모델 백엔드 (DAI_BACKEND)
+   │     claude: Claude 툴 러너 (스트리밍, adaptive thinking, 서버측 안전장치 폴백)
+   │     local : OpenAI 호환 로컬 서버 (매 턴 문서 검색 주입, 함수 호출은 지원 시)
    │        ├─ search_defense_docs      (BM25 지식 베이스)
    │        ├─ lookup_military_term     (약어 사전)
    │        ├─ convert_military_time / get_current_dtg
@@ -38,7 +41,8 @@ Claude API 위에 구축한 **국방 업무 특화 생성형 AI 비서**입니�
 ```
 defense_assistant/
 ├── assistant.py      핵심 처리 흐름 (DefenseAssistant, Session, ChatResult)
-├── prompts.py        시스템 프롬프트 (프롬프트 캐싱을 위해 가변 값 미포함)
+├── prompts.py        시스템 프롬프트 (Claude용 / 로컬 모델용)
+├── backends/         base.py(공통 인터페이스) · claude.py · local.py(OpenAI 호환)
 ├── config.py         환경 변수 설정 (Settings)
 ├── cli.py            터미널 REPL / 검색 / 서버 실행 / 사용자 관리
 ├── server.py         FastAPI 앱 (인증, 세션 영속화, 관리자 API, 웹 UI)
@@ -132,7 +136,8 @@ print(result.tools_called, result.usage)
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | – | API 키 (또는 `ant auth login`) |
+| `DAI_BACKEND` | `claude` | 모델 백엔드 `claude` / `local`. 로컬 모델 항목은 [docs/로컬모델.md](docs/로컬모델.md) |
+| `ANTHROPIC_API_KEY` | – | API 키 (또는 `ant auth login`). 로컬 모드에서는 불필요 |
 | `DAI_MODEL` | `claude-opus-5-5` | 모델 ID |
 | `DAI_EFFORT` | `high` | 추론 깊이 `low/medium/high/xhigh/max` |
 | `DAI_MAX_TOKENS` | `16000` | 응답 최대 토큰 |
@@ -163,17 +168,19 @@ print(result.tools_called, result.usage)
 - 실패한 턴(네트워크 오류 등)은 세션 기록에 남기지 않아 대화 이력이 오염되지 않습니다.
 - 서버 모드에서는 비밀번호를 scrypt로 해시하고 토큰은 SHA-256 해시만 저장합니다. 대화 기록은 마스킹된 상태로 저장되어 민감정보 원문이 DB에 남지 않습니다. 사용자별 인가 등급과 전역 허용 등급 중 낮은 쪽이 적용됩니다.
 - Amazon Bedrock·Vertex AI 등 다른 플랫폼에서 구동하려면 `DefenseAssistant(client=...)`에 해당 플랫폼 클라이언트를 주입하고 `DAI_FALLBACKS=off`로 두십시오.
+- 외부 연결이 전혀 허용되지 않는 망에서는 `DAI_BACKEND=local`로 부대 내부 모델 서버를 사용합니다. 자세한 절차는 [docs/로컬모델.md](docs/로컬모델.md)를 참고하십시오.
 
 ## 테스트
 
 ```bash
-pytest          # 70개 테스트, 네트워크·API 키 불필요
+pytest          # 82개 테스트, 네트워크·API 키 불필요
 ```
-가짜 툴 러너로 전체 처리 흐름(등급 차단, 마스킹, 도구 실행, 폴백 감지, 거부 처리, SSE 스트리밍)과 인증·세션 영속화·관리자 API를 검증합니다.
+가짜 툴 러너로 전체 처리 흐름(등급 차단, 마스킹, 도구 실행, 폴백 감지, 거부 처리, SSE 스트리밍)과 인증·세션 영속화·관리자 API를 검증합니다. 로컬 백엔드는 OpenAI 호환 규격을 흉내 낸 시험 서버를 실제 포트에 띄워 스트리밍·함수 호출·미지원 서버 자동 전환을 검증합니다.
 
 ## 한계와 향후 과제
 
 - 비밀 *표기* 탐지만 수행하며 내용 기반 비밀성 판단은 하지 않습니다.
+- 로컬 모델 백엔드는 실제 모델 서버가 아닌 규격 시험 서버로 검증했습니다. 실제 서버에서는 `defense-ai local-check`로 확인이 필요하며, 모델 품질은 크기와 종류에 따라 크게 다릅니다.
 - BM25 키워드 검색이므로 의미적으로 유사하지만 어휘가 다른 질의는 놓칠 수 있습니다. 망 분리 환경용 로컬 임베딩 모델 결합을 고려할 수 있습니다.
 - 서버는 단일 인스턴스 기준입니다(SQLite, 메모리 잠금). 여러 대로 늘리려면 저장소를 PostgreSQL 등으로 바꾸고 로그인 잠금을 공유 저장소로 옮겨야 합니다.
 - 전송 구간 암호화(HTTPS)는 리버스 프록시에서 처리해야 하며, 감사 로그 보안 저장은 배포 환경에서 추가해야 합니다.

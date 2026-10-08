@@ -169,7 +169,7 @@ def create_app(assistant: DefenseAssistant | None = None, db: Database | None = 
     @app.get("/auth/me")
     def me(user: Principal = Depends(current_user)) -> dict[str, Any]:
         a = get_assistant()
-        return {"username": user.username, "role": user.role, "clearance": user.clearance.name, "clearance_korean": user.clearance.korean, "model": a.settings.model, "chunks": len(a.store), "tools": [t.name for t in a.tools]}
+        return {"username": user.username, "role": user.role, "clearance": user.clearance.name, "clearance_korean": user.clearance.korean, "model": a.model_label, "backend": a.backend.name, "chunks": len(a.store), "tools": [t.name for t in a.tools]}
 
     # ---- 대화 ----------------------------------------------------------
     @app.get("/sessions")

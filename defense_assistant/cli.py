@@ -4,6 +4,7 @@
     defense-ai chat --user 홍길동
     defense-ai search "거수자 조치"
     defense-ai serve --port 8000
+    defense-ai local-check     # 로컬 모델 서버(DAI_BACKEND=local) 연결 점검
     defense-ai users add kim --role user --clearance RESTRICTED
     defense-ai users list | passwd kim | disable kim | enable kim | remove kim
 """
@@ -29,8 +30,13 @@ HELP = """명령:
 
 def _build_settings(args: argparse.Namespace) -> Settings:
     s = Settings.from_env(root=Path(args.root).resolve() if args.root else None)
+    if getattr(args, "backend", None):
+        s.backend = args.backend
     if getattr(args, "model", None):
-        s.model = args.model
+        if s.backend == "local":
+            s.local_model = args.model
+        else:
+            s.model = args.model
     if getattr(args, "effort", None):
         s.effort = args.effort
     if getattr(args, "no_fallback", False):
@@ -43,7 +49,7 @@ def run_chat(args: argparse.Namespace) -> int:
     settings = _build_settings(args)
     assistant = DefenseAssistant(settings)
     session = assistant.new_session(user_id=args.user)
-    print(f"국방 특화 AI 비서 (모델 {settings.model}, 추론 {settings.effort}, 허용 등급 {settings.max_classification.korean})")
+    print(f"국방 특화 AI 비서 (모델 {assistant.model_label}, 추론 {settings.effort}, 허용 등급 {settings.max_classification.korean})")
     print(f"지식 베이스 {len(assistant.store)}개 청크 적재. /help 로 명령을 확인하십시오.\n")
     stream = not args.no_stream
 
@@ -67,7 +73,7 @@ def run_chat(args: argparse.Namespace) -> int:
             continue
         if line == "/status":
             print(f"세션 {session.session_id} / 사용자 {session.user_id} / 턴 {session.turns} / 메시지 {len(session.messages)}")
-            print(f"모델 {settings.model}, 추론 {settings.effort}, 폴백 {settings.fallbacks}, 마스킹 {settings.redaction}, 감사 로그 {settings.audit_log}")
+            print(f"백엔드 {assistant.backend.name}, 모델 {assistant.model_label}, 추론 {settings.effort}, 폴백 {settings.fallbacks}, 마스킹 {settings.redaction}, 감사 로그 {settings.audit_log}")
             continue
         if line.startswith("/docs"):
             q = line[5:].strip()
@@ -147,6 +153,45 @@ def run_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_local_check(args: argparse.Namespace) -> int:
+    """로컬 모델 서버 연결·모델 존재·짧은 응답을 차례로 점검한다."""
+    from .backends import BackendError
+    from .backends.local import LocalBackend
+    from .knowledge import DocumentStore
+    from .prompts import build_local_system_prompt
+    from .tools import build_tools
+    from .tools.glossary import load_glossary
+
+    settings = _build_settings(args)
+    settings.backend = "local"
+    store = DocumentStore.from_directory(settings.docs_dir)
+    backend = LocalBackend(settings, build_tools(store, load_glossary(settings.glossary_path)), store, build_local_system_prompt(store.titles))
+    print(f"[1/3] 서버 연결: {settings.local_base_url}")
+    try:
+        info = backend.check()
+    except BackendError as e:
+        print(f"  ✖ {e}")
+        return 1
+    print(f"  ✔ 연결됨. 서버의 모델 {len(info['models'])}개: {', '.join(info['models'][:8]) or '(없음)'}")
+    print(f"[2/3] 모델 확인: {settings.local_model}")
+    if not info["model_available"]:
+        print(f"  ✖ 서버에 '{settings.local_model}' 이(가) 없습니다. Ollama 라면 `ollama pull {settings.local_model}` 를 실행하거나 DAI_LOCAL_MODEL 을 위 목록 중 하나로 바꾸십시오.")
+        return 1
+    print("  ✔ 모델 있음")
+    print("[3/3] 응답 시험: '경계 근무 교대 시 보고 형식은?'")
+    try:
+        chunks: list[str] = []
+        turn = backend.run([{"role": "user", "content": "경계 근무 교대 시 보고 형식은?"}], user_text="경계 근무 교대 시 보고 형식은?", on_text=chunks.append, on_tool=None)
+    except BackendError as e:
+        print(f"  ✖ {e}")
+        return 1
+    preview = turn.text.strip().replace("\n", " ")
+    print(f"  ✔ 응답 수신 ({len(turn.text)}자, 도구 {turn.tools_called}, 함수 호출 지원: {'예' if backend._tools_supported else '아니오/미확인'})")
+    print(f"  ▶ {preview[:200]}{'…' if len(preview) > 200 else ''}")
+    print("점검 완료. .env 에 DAI_BACKEND=local 을 설정하면 이 모델로 동작합니다.")
+    return 0
+
+
 def run_users(args: argparse.Namespace) -> int:
     from getpass import getpass
 
@@ -208,7 +253,8 @@ def run_users(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="defense-ai", description="국방 특화 생성형 AI 비서")
     p.add_argument("--root", help="프로젝트 루트 (data/, audit/ 상대 경로 기준)")
-    p.add_argument("--model", help="모델 ID (기본 claude-opus-5-5)")
+    p.add_argument("--backend", choices=["claude", "local"], help="모델 백엔드 (기본: DAI_BACKEND 또는 claude)")
+    p.add_argument("--model", help="모델 ID (claude: 기본 claude-opus-5-5 / local: DAI_LOCAL_MODEL)")
     p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], help="추론 깊이")
     p.add_argument("--no-fallback", action="store_true", help="서버측 안전장치 폴백 비활성화")
     p.add_argument("-v", "--verbose", action="store_true", help="도구 호출·토큰 사용량 표시")
@@ -225,6 +271,8 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("serve", help="HTTP API 서버 실행")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8000)
+
+    sub.add_parser("local-check", help="로컬 모델 서버 연결 점검")
 
     u = sub.add_parser("users", help="사용자 관리")
     usub = u.add_subparsers(dest="users_command")
@@ -262,6 +310,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_serve(args)
     if args.command == "users":
         return run_users(args)
+    if args.command == "local-check":
+        return run_local_check(args)
     parser.print_help()
     return 1
 
