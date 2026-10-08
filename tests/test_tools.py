@@ -97,3 +97,11 @@ def test_build_tools_schema_and_call(store, glossary):
     assert "070530ZOCT26" in by_name["convert_military_time"].call({"value": "071430IOCT26", "to_zone": "Z"})
     with pytest.raises(ValueError):
         by_name["convert_unit"].call({"value": "many", "from_unit": "m", "to_unit": "km"})
+
+
+def test_medevac_codes_follow_standard_9line():
+    # 9-Line 표준(ATP 4-02.2): 4번 B=호이스트, 7번 A 패널 / B 발광(pyrotechnic) / C 연막(smoke) / D 없음 / E 기타.
+    # 이전 양식은 7번 B·C 가 뒤바뀌어 있었고, 모델이 이 양식을 그대로 답변에 옮겼다(평가 q07).
+    out = render_report("MEDEVAC", {})
+    assert "A 패널 / B 발광 신호 / C 연막 / D 없음 / E 기타" in out
+    assert "B 호이스트" in out and "들것걸이" not in out

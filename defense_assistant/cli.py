@@ -125,7 +125,7 @@ def run_chat(args: argparse.Namespace) -> int:
             if result.fallback_used:
                 notes.append(f"폴백 모델로 응답: {result.served_by}")
             if args.verbose and result.usage.get("input_tokens") is not None:
-                notes.append(f"토큰 입력 {result.usage['input_tokens']} / 출력 {result.usage['output_tokens']} / 캐시 {result.usage['cache_read_input_tokens']}")
+                notes.append(f"토큰 입력 {result.usage['input_tokens']} / 출력 {result.usage['output_tokens']} / 캐시 읽기 {result.usage['cache_read_input_tokens']} / 캐시 쓰기 {result.usage.get('cache_creation_input_tokens')}")
             if notes:
                 print("  ℹ " + " | ".join(notes))
             print()

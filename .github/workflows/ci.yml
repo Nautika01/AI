@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: pip install -e ".[server,dev]"
+      - name: Tests
+        run: python -m pytest -q
+      # 검색 지표를 로그로 남긴다(실패 판정은 하지 않음 — 기준치는 tests/test_evaluation.py 가 검사한다).
+      # 모델을 호출하지 않으므로 API 키 없이 돈다. 답변 평가(--answers)는 비용이 들어 CI 에서 돌리지 않는다.
+      - name: Retrieval metrics (report only)
+        run: defense-ai eval

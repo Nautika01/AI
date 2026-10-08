@@ -34,7 +34,7 @@ def test_streaming_and_history(make_assistant):
     r = assistant.chat(session, "질문입니다", on_text=chunks.append)
     assert r.text == "첫 번째 응답" == "".join(chunks)
     assert r.stop_reason == "end_turn" and r.served_by == "claude-opus-5-5" and not r.fallback_used
-    assert r.usage == {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 50}
+    assert r.usage == {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 50, "cache_creation_input_tokens": None}
     assert [m["role"] for m in session.messages] == ["user", "assistant"]
     assert session.turns == 1
     # 두 번째 턴은 전체 기록을 보낸다

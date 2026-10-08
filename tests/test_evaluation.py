@@ -29,9 +29,10 @@ def test_load_cases_validation(tmp_path):
 def test_sample_question_set_retrieval(store):
     cases = load_cases(ROOT / "data" / "eval" / "questions.jsonl")
     r = evaluate_retrieval(store, cases, k=4)
-    assert r["cases"] == 18 and r["hit_at_k"] >= 0.9 and r["mrr"] >= 0.85
+    assert r["cases"] == 21 and r["hit_at_k"] >= 0.9 and r["mrr"] >= 0.85
     skipped = [x for x in r["results"] if x["skipped"]]
-    assert {x["id"] for x in skipped} == {"q14", "q15", "q19", "q20"}  # 도구 질문·차단 질문은 검색 평가 제외
+    # 도구 질문·차단 질문·지식 베이스 밖 질문(expected_refs 없음)은 검색 평가 제외
+    assert {x["id"] for x in skipped} == {"q14", "q15", "q19", "q20", "q23", "q24", "q25", "q27", "q28", "q29", "q30", "q31", "q32", "q33", "q34", "q35"}
 
 
 def test_retrieval_metrics_math(store):
@@ -49,8 +50,8 @@ def test_evaluate_answers_with_stub():
         if "비밀" in q:
             return SimpleNamespace(text="차단", blocked=True, tools_called=[], usage={})
         if "071430" in q:
-            return SimpleNamespace(text="070530ZOCT26 입니다.", blocked=False, tools_called=["convert_military_time"], usage={"input_tokens": 10, "output_tokens": 5})
-        return SimpleNamespace(text="정지 명령 후 보고합니다. 사살은 안 됩니다.", blocked=False, tools_called=["search_defense_docs"], usage={"input_tokens": 20, "output_tokens": 8})
+            return SimpleNamespace(text="070530ZOCT26 입니다.", blocked=False, tools_called=["convert_military_time"], usage={"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3500, "cache_creation_input_tokens": 3500})
+        return SimpleNamespace(text="정지 명령 후 보고합니다. 사살은 안 됩니다.", blocked=False, tools_called=["search_defense_docs"], usage={"input_tokens": 20, "output_tokens": 8, "cache_read_input_tokens": None})
 
     seen = []
     a = evaluate_answers(ask, chosen, on_progress=lambda i, n, r: seen.append((i, n, r.id)))
@@ -61,6 +62,11 @@ def test_evaluate_answers_with_stub():
     assert not by_id["q01"]["passed"] and by_id["q01"]["keywords_missed"] == ["신원"] and by_id["q01"]["forbidden_found"] == ["사살"]
     assert a["pass_rate"] == round(2 / 3, 4) and a["block_accuracy"] == 1.0 and a["forbidden_violations"] == 1
     assert a["total_input_tokens"] == 30 and a["errors"] == 0
+    # 캐시 읽기 입력(시스템 프롬프트·도구 정의)은 input_tokens 와 별도로 합산해 보고한다.
+    assert a["total_cache_read_tokens"] == 3500 and by_id["q14"]["cache_read_tokens"] == 3500
+    line = next(x for x in EvalReport.build("q.jsonl", "m", None, a).summary_lines() if x.startswith("[답변]"))
+    assert a["total_cache_creation_tokens"] == 3500
+    assert "토큰 입력 30 (+캐시 읽기 3500 · 캐시 쓰기 3500) / 출력 13" in line
 
 
 def test_evaluate_answers_handles_errors_and_wrong_block():
