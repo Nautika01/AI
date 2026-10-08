@@ -11,7 +11,11 @@ _DTG_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})([A-IK-Z])\s*([A-Z]{3})\s*(\d{2}|\d
 
 def zone_offset(letter: str) -> timedelta:
     """군 시간대 문자 → UTC 오프셋. J(현지 시간)는 지원하지 않는다."""
-    letter = letter.upper()
+    letter = letter.strip().upper()
+    if letter in {"J", "LOCAL", "현지", "현지시간", "현지 시간"}:
+        raise ValueError(f"지원하지 않는 시간대: {letter!r} (J·현지 시간은 위치에 따라 달라 변환할 수 없습니다. Z, I 등 시간대 문자나 KST/UTC 를 지정하십시오)")
+    if len(letter) != 1:
+        raise ValueError(f"시간대는 한 글자 군 시간대 문자(Z, I 등) 또는 KST/UTC 여야 합니다: {letter!r}")
     if letter == "Z":
         return timedelta(0)
     if "A" <= letter <= "I":

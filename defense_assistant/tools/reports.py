@@ -87,12 +87,31 @@ def resolve_kind(kind: str) -> str:
     raise ValueError(f"지원하지 않는 보고서 종류: {kind!r}. 가능: {', '.join(TEMPLATES)}")
 
 
+def _field_text(val: Any) -> str | None:
+    """필드 값을 양식에 넣을 문자열로 정규화한다 (숫자·목록 허용)."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return "예" if val else "아니오"
+    if isinstance(val, (list, tuple)):
+        return ", ".join(str(v) for v in val)
+    if isinstance(val, dict):
+        return ", ".join(f"{k}: {v}" for k, v in val.items())
+    return str(val)
+
+
 def render_report(kind: str, fields: dict[str, Any] | str | None = None) -> str:
     """양식을 렌더링한다. `fields`가 주어지면 해당 항목을 채우고, 없는 항목은 빈칸으로 둔다."""
     k = resolve_kind(kind)
     if isinstance(fields, str):
-        fields = json.loads(fields) if fields.strip() else {}
+        try:
+            fields = json.loads(fields) if fields.strip() else {}
+        except json.JSONDecodeError as e:
+            raise ValueError(f"fields 는 JSON 객체 형식이어야 합니다 (예: {{\"unit\": \"1대대\"}}): {e.msg}") from e
     fields = fields or {}
+    if not isinstance(fields, dict):
+        raise ValueError(f"fields 는 항목명→값 객체여야 합니다 (받은 형식: {type(fields).__name__})")
+    fields = {str(k): _field_text(v) for k, v in fields.items()}
     tpl = TEMPLATES[k]
     lines = [f"■ {tpl['title']}", ""]
     missing: list[str] = []

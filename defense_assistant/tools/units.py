@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 # 기준 단위로 변환하는 계수 (길이: m, 속도: m/s, 무게: kg, 부피: L, 각도: deg, 압력: kPa)
 _LENGTH = {"m": 1.0, "km": 1000.0, "cm": 0.01, "mm": 0.001, "mi": 1609.344, "nm": 1852.0, "nmi": 1852.0, "yd": 0.9144, "ft": 0.3048, "in": 0.0254}
 _SPEED = {"m/s": 1.0, "km/h": 1000.0 / 3600.0, "kph": 1000.0 / 3600.0, "mph": 1609.344 / 3600.0, "kn": 1852.0 / 3600.0, "kt": 1852.0 / 3600.0, "kts": 1852.0 / 3600.0, "ft/s": 0.3048}
@@ -31,16 +33,39 @@ def _temperature(value: float, src: str, dst: str) -> float:
     return from_c[dst](to_c[src](value))
 
 
+def _fmt_result(x: float, sig: int = 4) -> str:
+    """유효숫자 약 4자리로, 지수 표기 없이 천 단위 구분 기호를 넣어 표시한다."""
+    if x == 0 or not math.isfinite(x):
+        return f"{x:g}"
+    magnitude = math.floor(math.log10(abs(x)))
+    decimals = min(max(0, sig - 1 - magnitude), 12)
+    s = f"{x:,.{decimals}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return "0" if s in {"-0", ""} else s
+
+
+def _fmt_input(x: float) -> str:
+    """입력값은 자릿수를 잃지 않도록 그대로(지수 표기 없이) 표시한다."""
+    x = float(x)
+    if not math.isfinite(x):
+        return f"{x:g}"
+    if x == int(x) and abs(x) < 1e15:
+        return f"{int(x):,}"
+    s = f"{x:,.12f}".rstrip("0").rstrip(".")
+    return s if s not in {"0", "-0"} else f"{x:g}"
+
+
 def convert_units(value: float, from_unit: str, to_unit: str) -> str:
     """단위를 변환한다. 같은 범주(길이/속도/무게/부피/각도/압력/온도)끼리만 가능하다."""
     src, dst = _norm(from_unit), _norm(to_unit)
     if src in {"c", "f", "k"} and dst in {"c", "f", "k"}:
         out = _temperature(float(value), src, dst)
-        return f"{value:g} {from_unit} = {out:.2f} {to_unit} (온도)"
+        return f"{_fmt_input(value)} {from_unit} = {out:.2f} {to_unit} (온도)"
     for name, table in _TABLES:
         if src in table and dst in table:
             out = float(value) * table[src] / table[dst]
-            return f"{value:g} {from_unit} = {out:,.4g} {to_unit} ({name})"
+            return f"{_fmt_input(value)} {from_unit} = {_fmt_result(out)} {to_unit} ({name})"
     raise ValueError(
         f"변환할 수 없는 단위 조합: {from_unit!r} → {to_unit!r}. "
         "지원 단위: 길이(m, km, mi, nm, yd, ft, in), 속도(m/s, km/h, mph, kn), 무게(kg, g, t, lb, oz), "
