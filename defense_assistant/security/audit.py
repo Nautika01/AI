@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 def sha256_text(text: str) -> str:
@@ -24,7 +28,7 @@ def sha256_text(text: str) -> str:
 class AuditRecord:
     session_id: str
     user_id: str
-    event: str  # "chat" | "blocked" | "error"
+    event: str  # "chat" | "blocked" | "error" | "login_failed" | "login_locked"
     input_sha256: str
     input_chars: int
     classification: str
@@ -56,15 +60,35 @@ class AuditLogger:
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def write(self, record: AuditRecord) -> None:
-        line = json.dumps(record.to_dict(), ensure_ascii=False)
+        data = (json.dumps(record.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
         with self._lock:
             self.records.append(record)
             if self.path:
-                with self.path.open("a", encoding="utf-8") as f:
-                    f.write(line + "\n")
+                with self.path.open("a+b") as f:
+                    # 이전 기록이 개행 없이 잘려 있으면(쓰기 중 비정상 종료) 줄을 먼저 닫아 새 기록이 붙지 않게 한다
+                    f.seek(0, os.SEEK_END)
+                    if f.tell() > 0:
+                        f.seek(-1, os.SEEK_END)
+                        if f.read(1) != b"\n":
+                            data = b"\n" + data
+                    f.write(data)  # 한 번에 써서 다른 기록과 섞이지 않게 한다
 
     def read_all(self) -> list[dict[str, Any]]:
+        """기록 전체를 읽는다. 손상된 줄은 건너뛰지 않고 `event="corrupt"` 항목으로 표시한다."""
         if not self.path or not self.path.exists():
             return [r.to_dict() for r in self.records]
-        with self.path.open(encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
+        out: list[dict[str, Any]] = []
+        # utf-8-sig: 편집기가 붙인 BOM 허용, errors="replace": 멀티바이트 중간에서 잘린 줄 허용
+        with self.path.open(encoding="utf-8-sig", errors="replace") as f:
+            for line_no, line in enumerate(f, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    item = None
+                if not isinstance(item, dict):
+                    log.warning("감사 로그 %s 의 %d번째 줄이 손상되어 해석하지 못했습니다.", self.path, line_no)
+                    item = {"event": "corrupt", "line_no": line_no, "raw": line.rstrip("\n")[:200]}
+                out.append(item)
+        return out

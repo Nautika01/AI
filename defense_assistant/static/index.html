@@ -100,6 +100,19 @@
   };
   const addMeta = (text) => { const d = document.createElement('div'); d.className = 'meta'; d.textContent = text; $('log').appendChild(d); };
 
+  // 스트리밍이 끝난 뒤 말풍선에 남길 최종 문구. 거부 턴은 안내로 바꾸고, 길이·도구 한도 안내는 덧붙인다.
+  const finalText = (streamed, data) => {
+    if (data.blocked || !streamed) return data.text || streamed;
+    if (data.stop_reason === 'refusal') return data.text || streamed;
+    if (data.stop_reason === 'max_tokens' || data.stop_reason === 'tool_use') {
+      const m = /\n\n\([^\n]*\)$/.exec(data.text || '');
+      if (m && !streamed.endsWith(m[0])) return streamed + m[0];
+    }
+    return streamed;
+  };
+  // 한글 IME 조합 중의 Enter 는 조합 확정용이므로 전송하지 않는다
+  const isSubmitKey = (ev) => ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229;
+
   async function loadSessions() {
     const { sessions } = await api('/sessions');
     const ul = $('sessions'); ul.innerHTML = '';
@@ -108,7 +121,14 @@
       if (s.session_id === current) li.classList.add('active');
       const span = document.createElement('span'); span.textContent = s.title || '(새 대화)';
       const del = document.createElement('button'); del.textContent = '✕'; del.title = '삭제';
-      del.onclick = async (ev) => { ev.stopPropagation(); if (!confirm('이 대화를 삭제할까요?')) return; await api('/sessions/' + s.session_id, { method: 'DELETE' }); if (current === s.session_id) { current = null; $('log').innerHTML = ''; } loadSessions(); };
+      del.onclick = async (ev) => {
+        ev.stopPropagation();
+        if (busy && current === s.session_id) { alert('응답을 받는 중에는 이 대화를 삭제할 수 없습니다. 응답이 끝난 뒤 다시 시도하십시오.'); return; }
+        if (!confirm('이 대화를 삭제할까요?')) return;
+        try { await api('/sessions/' + s.session_id, { method: 'DELETE' }); } catch (e) { alert(e.message); return; }
+        if (current === s.session_id) { current = null; $('log').innerHTML = ''; }
+        loadSessions();
+      };
       li.appendChild(span); li.appendChild(del);
       li.onclick = () => openSession(s.session_id);
       ul.appendChild(li);
@@ -124,6 +144,7 @@
 
   async function send(text) {
     if (busy) return; busy = true; $('sendBtn').disabled = true;
+    const wasNew = current === null;
     addMsg('user', text);
     const bot = addMsg('bot', '');
     try {
@@ -144,17 +165,18 @@
           else if (ev === 'text') { bot.textContent += data; $('log').scrollTop = $('log').scrollHeight; }
           else if (ev === 'tool') addMeta('⚙ 도구: ' + data.name);
           else if (ev === 'done') {
-            if (data.blocked) { bot.classList.add('blocked'); bot.textContent = data.text; }
-            else if (!bot.textContent) bot.textContent = data.text;
+            if (data.blocked) bot.classList.add('blocked');
+            bot.textContent = finalText(bot.textContent, data);
+            if (data.session_id === null) current = null;  // 저장되지 않은 새 대화 (예: 첫 질문 차단)
             const notes = [];
             const red = Object.entries(data.redactions || {}); if (red.length) notes.push('마스킹: ' + red.map(([k, v]) => k + ' ' + v + '건').join(', '));
             if (data.fallback_used) notes.push('폴백 모델 응답: ' + data.served_by);
             if (notes.length) addMeta(notes.join(' | '));
           }
-          else if (ev === 'error') { bot.classList.add('error'); bot.textContent = '✖ ' + data.detail; }
+          else if (ev === 'error') { bot.classList.add('error'); bot.textContent = '✖ ' + data.detail; if (wasNew) current = null; }
         }
       }
-    } catch (e) { bot.classList.add('error'); bot.textContent = '✖ ' + e.message; }
+    } catch (e) { bot.classList.add('error'); bot.textContent = '✖ ' + e.message; if (wasNew) current = null; }
     finally { busy = false; $('sendBtn').disabled = false; loadSessions(); $('input').focus(); }
   }
 
@@ -177,7 +199,7 @@
   $('logoutBtn').onclick = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch (e) {} logout(); };
   $('newBtn').onclick = () => { current = null; $('log').innerHTML = ''; loadSessions(); $('input').focus(); };
   $('chatForm').onsubmit = (ev) => { ev.preventDefault(); const t = $('input').value.trim(); if (!t) return; $('input').value = ''; send(t); };
-  $('input').addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('chatForm').requestSubmit(); } });
+  $('input').addEventListener('keydown', (ev) => { if (isSubmitKey(ev)) { ev.preventDefault(); $('chatForm').requestSubmit(); } });
   init();
 })();
 </script>

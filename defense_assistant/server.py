@@ -20,32 +20,37 @@
     GET  /health                상태 확인 (인증 불필요, 최소 정보)
 
 운영 시에는 HTTPS 종단(리버스 프록시) 뒤에 두고, 감사 로그를 보안 저장소로 전송한다.
+리버스 프록시 뒤에서는 DAI_TRUSTED_PROXIES(쉼표로 구분한 IP 또는 CIDR, "*" 는 전부)에
+프록시 주소를 지정해야 로그인 실패 제한이 실제 클라이언트 주소(X-Forwarded-For) 기준으로 동작한다.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import os
 import queue
 import threading
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .assistant import AssistantError, DefenseAssistant, Session
 from .auth import LoginThrottle, Principal
+from .security.audit import AuditRecord
 from .security.classification import Classification
 from .storage import Database, transcript
 
 log = logging.getLogger(__name__)
 _STATIC = Path(__file__).parent / "static"
 _bearer = HTTPBearer(auto_error=False)
+_BACKEND_UNAVAILABLE = "모델 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하거나 관리자에게 문의하십시오."
 
 
 # ---- 요청 본문 ---------------------------------------------------------
@@ -57,6 +62,13 @@ class LoginRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=20000)
     session_id: str | None = None
+
+    @field_validator("message")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("입력이 비어 있습니다.")
+        return v
 
 
 class UserCreate(BaseModel):
@@ -83,9 +95,34 @@ def _parse_clearance(value: str) -> Classification:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
 
-def create_app(assistant: DefenseAssistant | None = None, db: Database | None = None) -> FastAPI:
+def _parse_trusted_proxies(value: str | Iterable[str] | None) -> tuple[list[ipaddress.IPv4Network | ipaddress.IPv6Network], bool]:
+    """신뢰 프록시 목록을 (네트워크 목록, 전부 신뢰 여부) 로 바꾼다. 해석할 수 없는 항목은 경고 후 무시한다."""
+    if value is None:
+        value = os.environ.get("DAI_TRUSTED_PROXIES", "")
+    items = value.split(",") if isinstance(value, str) else list(value)
+    nets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    trust_all = False
+    for item in (i.strip() for i in items):
+        if not item:
+            continue
+        if item == "*":
+            trust_all = True
+            continue
+        try:
+            nets.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            log.warning("DAI_TRUSTED_PROXIES 의 항목을 해석할 수 없어 무시합니다: %r", item)
+    return nets, trust_all
+
+
+def create_app(assistant: DefenseAssistant | None = None, db: Database | None = None, *, trusted_proxies: str | Iterable[str] | None = None) -> FastAPI:
+    """`trusted_proxies` 를 생략하면 환경 변수 DAI_TRUSTED_PROXIES 를 쓴다 (기본: 신뢰 프록시 없음)."""
     app = FastAPI(title="국방 특화 생성형 AI 비서", version="0.3.0")
-    session_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+    # 응답을 생성 중인 세션 id. 턴이 끝나면 지우므로 처리한 세션 수만큼 쌓이지 않는다.
+    active_turns: set[str] = set()
+    active_mutex = threading.Lock()
+    app.state.active_turns = active_turns
+    proxy_nets, trust_all_proxies = _parse_trusted_proxies(trusted_proxies)
     state: dict[str, Any] = {"assistant": assistant, "db": db, "throttle": None}
 
     def get_assistant() -> DefenseAssistant:
@@ -126,10 +163,12 @@ def create_app(assistant: DefenseAssistant | None = None, db: Database | None = 
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="관리자 권한이 필요합니다.")
         return user
 
-    def owned_session(session_id: str | None, user: Principal) -> Session:
+    def owned_session(session_id: str | None, user: Principal, *, persist: bool = True) -> Session:
+        """`persist=False` 이면 새 세션을 메모리에만 만든다 (첫 턴이 끝난 뒤 저장)."""
         if session_id is None:
             session = get_assistant().new_session(user_id=user.username, max_classification=user.clearance)
-            get_db().save_session(session)
+            if persist:
+                get_db().save_session(session)
             return session
         session = get_db().load_session(session_id, username=user.username)
         if session is None:
@@ -147,18 +186,51 @@ def create_app(assistant: DefenseAssistant | None = None, db: Database | None = 
         return {"status": "ok", "version": app.version}
 
     # ---- 인증 ----------------------------------------------------------
+    def _is_trusted_proxy(host: str) -> bool:
+        if trust_all_proxies:
+            return True
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return any(addr in net for net in proxy_nets)
+
+    def client_ip(request: Request) -> str:
+        """실제 클라이언트 주소. 신뢰 프록시에서 온 요청만 X-Forwarded-For 를 따른다."""
+        host = request.client.host if request.client else "unknown"
+        if not (proxy_nets or trust_all_proxies) or not _is_trusted_proxy(host):
+            return host
+        hops = [h.strip() for h in ",".join(request.headers.getlist("x-forwarded-for")).split(",") if h.strip()]
+        # 가장 가까운 홉(오른쪽)부터 보며 신뢰 프록시가 아닌 첫 주소를 클라이언트로 본다 (왼쪽 값은 위조 가능)
+        for hop in reversed(hops):
+            if not _is_trusted_proxy(hop):
+                return hop
+        return hops[0] if hops else host
+
+    def audit_login(event: str, username: str, client: str) -> None:
+        try:
+            get_assistant().audit.write(AuditRecord(
+                session_id="", user_id=username, event=event, input_sha256="", input_chars=0,
+                classification="", detail=f"client={client}",
+            ))
+        except Exception:  # noqa: BLE001 - 감사 기록 실패가 로그인 응답을 막지 않게 한다
+            log.exception("로그인 감사 기록 실패")
+
     @app.post("/auth/login")
     def login(req: LoginRequest, request: Request) -> dict[str, Any]:
         throttle = get_throttle()
-        client = request.client.host if request.client else "unknown"
+        client = client_ip(request)
         key = f"{client}|{req.username}"
         if throttle.is_locked(key):
+            audit_login("login_locked", req.username, client)
             raise HTTPException(status_code=429, detail="로그인 실패가 반복되어 잠시 잠겼습니다. 잠시 후 다시 시도하십시오.")
         user = get_db().verify_credentials(req.username, req.password)
         if user is None:
             throttle.record_failure(key)
+            audit_login("login_failed", req.username, client)
             raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
         throttle.reset(key)
+        get_db().purge_expired_tokens()  # 만료 토큰이 다시 제시되지 않으면 남으므로 로그인 때 정리한다
         token, exp = get_db().issue_token(user.username, get_assistant().settings.token_ttl_hours)
         return {"token": token, "token_type": "bearer", "expires_at": exp.isoformat(), "username": user.username, "role": user.role, "clearance": user.clearance.name, "clearance_korean": user.clearance.korean}
 
@@ -185,44 +257,72 @@ def create_app(assistant: DefenseAssistant | None = None, db: Database | None = 
         session = owned_session(session_id, user)
         return {"session_id": session.session_id, "turns": session.turns, "messages": transcript(session.messages)}
 
+    def _try_begin(session_id: str) -> bool:
+        with active_mutex:
+            if session_id in active_turns:
+                return False
+            active_turns.add(session_id)
+            return True
+
+    def _end(session_id: str) -> None:
+        with active_mutex:
+            active_turns.discard(session_id)
+
     @app.delete("/sessions/{session_id}")
     def delete_session(session_id: str, user: Principal = Depends(current_user)) -> dict[str, bool]:
-        return {"deleted": get_db().delete_session(session_id, username=user.username)}
+        # 응답 생성 중에 지우면 턴이 끝날 때 저장되며 되살아나므로, 처리 중인 대화는 삭제하지 않는다
+        if not _try_begin(session_id):
+            raise HTTPException(status_code=409, detail="응답을 처리 중인 대화는 삭제할 수 없습니다. 응답이 끝난 뒤 다시 시도하십시오.")
+        try:
+            return {"deleted": get_db().delete_session(session_id, username=user.username)}
+        finally:
+            _end(session_id)
 
-    def _run_turn(session: Session, message: str, **callbacks: Any) -> dict[str, Any]:
-        lock = session_locks[session.session_id]
-        if not lock.acquire(blocking=False):
+    def _run_turn(session: Session, message: str, *, is_new: bool = False, **callbacks: Any) -> dict[str, Any]:
+        if not _try_begin(session.session_id):
             raise HTTPException(status_code=409, detail="이 대화는 이미 처리 중입니다. 응답이 끝난 뒤 다시 보내 주십시오.")
         try:
             result = get_assistant().chat(session, message, **callbacks)
-            get_db().save_session(session)
-            return {"session_id": session.session_id, **result.to_dict()}
+            session_id: str | None = session.session_id
+            if is_new:
+                if session.messages:
+                    get_db().save_session(session)
+                else:
+                    session_id = None  # 차단 등으로 남길 내용이 없는 새 대화는 저장하지 않는다
+            elif not get_db().save_session(session, create=False):
+                log.info("턴 처리 중 삭제된 대화는 다시 저장하지 않습니다: %s", session.session_id)
+            return {"session_id": session_id, **result.to_dict()}
         finally:
-            lock.release()
+            _end(session.session_id)
+
+    def _backend_error_detail(e: AssistantError, user: Principal) -> str:
+        # 원문에는 내부 모델 서버 주소·설정 이름·상류 응답 본문이 들어 있을 수 있어 관리자에게만 보여 준다
+        log.warning("모델 백엔드 오류 (사용자 %s): %s", user.username, e)
+        return str(e) if user.is_admin else _BACKEND_UNAVAILABLE
 
     @app.post("/chat")
     def chat(req: ChatRequest, user: Principal = Depends(current_user)) -> dict[str, Any]:
-        session = owned_session(req.session_id, user)
+        session = owned_session(req.session_id, user, persist=False)
         try:
-            return _run_turn(session, req.message)
+            return _run_turn(session, req.message, is_new=req.session_id is None)
         except AssistantError as e:
-            raise HTTPException(status_code=502, detail=str(e)) from e
+            raise HTTPException(status_code=502, detail=_backend_error_detail(e, user)) from e
 
     @app.post("/chat/stream")
     def chat_stream(req: ChatRequest, user: Principal = Depends(current_user)) -> StreamingResponse:
-        session = owned_session(req.session_id, user)
+        session = owned_session(req.session_id, user, persist=False)
         q: "queue.Queue[tuple[str, Any] | None]" = queue.Queue()
 
         def worker() -> None:
             try:
                 payload = _run_turn(
-                    session, req.message,
+                    session, req.message, is_new=req.session_id is None,
                     on_text=lambda t: q.put(("text", t)),
                     on_tool=lambda name, inp: q.put(("tool", {"name": name, "input": inp})),
                 )
                 q.put(("done", payload))
             except AssistantError as e:
-                q.put(("error", {"detail": str(e)}))
+                q.put(("error", {"detail": _backend_error_detail(e, user)}))
             except HTTPException as e:
                 q.put(("error", {"detail": e.detail}))
             except Exception as e:  # noqa: BLE001 - 스트림을 반드시 닫아야 한다
@@ -295,5 +395,9 @@ def create_app(assistant: DefenseAssistant | None = None, db: Database | None = 
 
 def _bootstrap_admin(db: Database, admin_password: str | None) -> None:
     if db.count_users() == 0 and admin_password:
-        db.create_user("admin", admin_password, role="admin", clearance=Classification.RESTRICTED)
+        try:
+            db.create_user("admin", admin_password, role="admin", clearance=Classification.RESTRICTED)
+        except ValueError as e:
+            log.error("DAI_ADMIN_PASSWORD 로 admin 계정을 만들지 못했습니다: %s 환경 변수를 고친 뒤 다시 시작하거나 `defense-ai users add` 로 관리자를 만드십시오.", e)
+            return
         log.warning("사용자가 없어 DAI_ADMIN_PASSWORD 로 admin 계정을 생성했습니다. 생성 후 환경 변수를 비우십시오.")
