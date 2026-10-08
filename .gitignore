@@ -8,3 +8,7 @@ audit/
 dist/
 build/
 .venv/
+storage/
+*.db
+*.db-wal
+*.db-shm

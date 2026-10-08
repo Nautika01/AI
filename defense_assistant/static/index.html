@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>국방 특화 AI 비서</title>
+<style>
+  :root { --bg:#f4f5f7; --panel:#fff; --line:#d9dde3; --text:#1b1f24; --muted:#5b6470; --accent:#1f4e79; --warn:#8a4b00; --warnbg:#fff4e0; --err:#a1201c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Malgun Gothic","Apple SD Gothic Neo",sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; }
+  header { background:var(--accent); color:#fff; padding:10px 16px; display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; flex:1; }
+  header .who { font-size:13px; opacity:.9; }
+  header button { background:transparent; color:#fff; border:1px solid rgba(255,255,255,.6); border-radius:4px; padding:4px 10px; cursor:pointer; }
+  main { flex:1; display:flex; min-height:0; }
+  aside { width:240px; border-right:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; }
+  aside .top { padding:10px; border-bottom:1px solid var(--line); }
+  aside ul { list-style:none; margin:0; padding:0; overflow:auto; flex:1; }
+  aside li { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; font-size:13px; display:flex; gap:6px; align-items:center; }
+  aside li.active { background:#e8eef5; }
+  aside li span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  aside li button { border:none; background:transparent; color:var(--muted); cursor:pointer; }
+  section { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #log { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:80%; padding:10px 14px; border-radius:10px; white-space:pre-wrap; line-height:1.5; font-size:14px; }
+  .user { align-self:flex-end; background:#dbe7f3; }
+  .bot { align-self:flex-start; background:var(--panel); border:1px solid var(--line); }
+  .bot.blocked { background:var(--warnbg); border-color:#e5b96b; color:var(--warn); }
+  .bot.error { background:#fde8e7; border-color:#e9a19e; color:var(--err); }
+  .meta { font-size:12px; color:var(--muted); align-self:flex-start; }
+  form.chat { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line); background:var(--panel); }
+  form.chat textarea { flex:1; resize:none; height:56px; padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  button.primary { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:0 18px; cursor:pointer; font:inherit; }
+  button.primary:disabled { opacity:.5; cursor:default; }
+  #login { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; }
+  #login form { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:28px; width:320px; display:flex; flex-direction:column; gap:10px; }
+  #login input { padding:10px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  #login .err { color:var(--err); font-size:13px; min-height:18px; }
+  .hidden { display:none !important; }
+  @media (max-width:700px) { aside { display:none; } .msg { max-width:95%; } }
+</style>
+</head>
+<body>
+<div id="login">
+  <form id="loginForm">
+    <h2 style="margin:0 0 6px;font-size:18px;">국방 특화 AI 비서</h2>
+    <input id="username" placeholder="아이디" autocomplete="username" required>
+    <input id="password" type="password" placeholder="비밀번호" autocomplete="current-password" required>
+    <button class="primary" style="height:40px">로그인</button>
+    <div class="err" id="loginErr"></div>
+    <div style="font-size:12px;color:var(--muted)">일반·대외비 이하 자료만 입력하십시오. 모든 대화는 감사 기록됩니다.</div>
+  </form>
+</div>
+
+<header class="hidden" id="hdr">
+  <h1>국방 특화 AI 비서</h1>
+  <span class="who" id="who"></span>
+  <button id="logoutBtn">로그아웃</button>
+</header>
+<main class="hidden" id="app">
+  <aside>
+    <div class="top"><button class="primary" id="newBtn" style="width:100%;height:34px">+ 새 대화</button></div>
+    <ul id="sessions"></ul>
+  </aside>
+  <section>
+    <div id="log"></div>
+    <form class="chat" id="chatForm">
+      <textarea id="input" placeholder="질문을 입력하십시오 (Enter 전송, Shift+Enter 줄바꿈)"></textarea>
+      <button class="primary" id="sendBtn">전송</button>
+    </form>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let token = null, me = null, current = null, busy = false;
+  try { token = sessionStorage.getItem('dai_token'); } catch (e) {}
+
+  const api = async (path, opts = {}) => {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const r = await fetch(path, Object.assign({}, opts, { headers }));
+    if (r.status === 401 && path !== '/auth/login') { logout(); throw new Error('로그인이 만료되었습니다.'); }
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || ('오류 ' + r.status));
+    return body;
+  };
+
+  const show = (ok) => {
+    $('login').classList.toggle('hidden', ok);
+    $('hdr').classList.toggle('hidden', !ok);
+    $('app').classList.toggle('hidden', !ok);
+  };
+
+  const addMsg = (cls, text) => {
+    const d = document.createElement('div');
+    d.className = 'msg ' + cls; d.textContent = text;
+    $('log').appendChild(d); $('log').scrollTop = $('log').scrollHeight; return d;
+  };
+  const addMeta = (text) => { const d = document.createElement('div'); d.className = 'meta'; d.textContent = text; $('log').appendChild(d); };
+
+  async function loadSessions() {
+    const { sessions } = await api('/sessions');
+    const ul = $('sessions'); ul.innerHTML = '';
+    for (const s of sessions) {
+      const li = document.createElement('li');
+      if (s.session_id === current) li.classList.add('active');
+      const span = document.createElement('span'); span.textContent = s.title || '(새 대화)';
+      const del = document.createElement('button'); del.textContent = '✕'; del.title = '삭제';
+      del.onclick = async (ev) => { ev.stopPropagation(); if (!confirm('이 대화를 삭제할까요?')) return; await api('/sessions/' + s.session_id, { method: 'DELETE' }); if (current === s.session_id) { current = null; $('log').innerHTML = ''; } loadSessions(); };
+      li.appendChild(span); li.appendChild(del);
+      li.onclick = () => openSession(s.session_id);
+      ul.appendChild(li);
+    }
+  }
+
+  async function openSession(id) {
+    const { messages } = await api('/sessions/' + id);
+    current = id; $('log').innerHTML = '';
+    for (const m of messages) addMsg(m.role === 'user' ? 'user' : 'bot', m.text);
+    loadSessions();
+  }
+
+  async function send(text) {
+    if (busy) return; busy = true; $('sendBtn').disabled = true;
+    addMsg('user', text);
+    const bot = addMsg('bot', '');
+    try {
+      const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
+      const r = await fetch('/chat/stream', { method: 'POST', headers, body: JSON.stringify({ message: text, session_id: current }) });
+      if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.detail || ('오류 ' + r.status)); }
+      const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          const ev = /^event: (.*)$/m.exec(chunk)?.[1]; const dataLine = chunk.split('\ndata: ')[1];
+          if (!ev || dataLine === undefined) continue;
+          const data = JSON.parse(dataLine);
+          if (ev === 'session') current = data.session_id;
+          else if (ev === 'text') { bot.textContent += data; $('log').scrollTop = $('log').scrollHeight; }
+          else if (ev === 'tool') addMeta('⚙ 도구: ' + data.name);
+          else if (ev === 'done') {
+            if (data.blocked) { bot.classList.add('blocked'); bot.textContent = data.text; }
+            else if (!bot.textContent) bot.textContent = data.text;
+            const notes = [];
+            const red = Object.entries(data.redactions || {}); if (red.length) notes.push('마스킹: ' + red.map(([k, v]) => k + ' ' + v + '건').join(', '));
+            if (data.fallback_used) notes.push('폴백 모델 응답: ' + data.served_by);
+            if (notes.length) addMeta(notes.join(' | '));
+          }
+          else if (ev === 'error') { bot.classList.add('error'); bot.textContent = '✖ ' + data.detail; }
+        }
+      }
+    } catch (e) { bot.classList.add('error'); bot.textContent = '✖ ' + e.message; }
+    finally { busy = false; $('sendBtn').disabled = false; loadSessions(); $('input').focus(); }
+  }
+
+  async function init() {
+    if (!token) { show(false); return; }
+    try { me = await api('/auth/me'); } catch (e) { show(false); return; }
+    $('who').textContent = `${me.username} · ${me.role === 'admin' ? '관리자' : '사용자'} · 인가 ${me.clearance_korean}`;
+    show(true); await loadSessions(); $('input').focus();
+  }
+  function logout() { try { sessionStorage.removeItem('dai_token'); } catch (e) {} token = null; me = null; current = null; $('log').innerHTML = ''; show(false); }
+
+  $('loginForm').onsubmit = async (ev) => {
+    ev.preventDefault(); $('loginErr').textContent = '';
+    try {
+      const body = await api('/auth/login', { method: 'POST', body: JSON.stringify({ username: $('username').value.trim(), password: $('password').value }) });
+      token = body.token; try { sessionStorage.setItem('dai_token', token); } catch (e) {}
+      $('password').value = ''; await init();
+    } catch (e) { $('loginErr').textContent = e.message; }
+  };
+  $('logoutBtn').onclick = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch (e) {} logout(); };
+  $('newBtn').onclick = () => { current = null; $('log').innerHTML = ''; loadSessions(); $('input').focus(); };
+  $('chatForm').onsubmit = (ev) => { ev.preventDefault(); const t = $('input').value.trim(); if (!t) return; $('input').value = ''; send(t); };
+  $('input').addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('chatForm').requestSubmit(); } });
+  init();
+})();
+</script>
+</body>
+</html>

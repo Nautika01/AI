@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "defense-assistant"
-version = "0.1.0"
+version = "0.2.0"
 description = "국방 특화 생성형 AI 비서 (Defense-domain generative AI assistant built on Claude)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,9 @@ defense-ai = "defense_assistant.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["defense_assistant*"]
+
+[tool.setuptools.package-data]
+defense_assistant = ["static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

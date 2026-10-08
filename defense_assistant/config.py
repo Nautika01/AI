@@ -27,6 +27,13 @@ class Settings:
     docs_dir: Path = field(default_factory=lambda: Path("data/docs"))
     glossary_path: Path = field(default_factory=lambda: Path("data/glossary.json"))
     audit_log: Path = field(default_factory=lambda: Path("audit/audit.jsonl"))
+    # --- 서버 운영 ---
+    db_path: Path = field(default_factory=lambda: Path("storage/defense.db"))
+    token_ttl_hours: float = 12.0
+    login_max_attempts: int = 5
+    login_lockout_minutes: int = 10
+    cors_origins: tuple[str, ...] = ()
+    admin_password: str | None = None  # 최초 기동 시 관리자 계정 자동 생성용 (사용자 0명일 때만)
 
     def __post_init__(self) -> None:
         if self.effort not in _VALID_EFFORT:
@@ -39,6 +46,10 @@ class Settings:
             raise ValueError("DAI_MAX_TOKENS must be >= 256")
         if self.max_iterations < 1:
             raise ValueError("DAI_MAX_ITERATIONS must be >= 1")
+        if self.token_ttl_hours <= 0:
+            raise ValueError("DAI_TOKEN_TTL_HOURS must be > 0")
+        if self.login_max_attempts < 1 or self.login_lockout_minutes < 1:
+            raise ValueError("DAI_LOGIN_MAX_ATTEMPTS and DAI_LOGIN_LOCKOUT_MINUTES must be >= 1")
 
     @classmethod
     def from_env(cls, root: Path | None = None) -> "Settings":
@@ -60,4 +71,10 @@ class Settings:
             docs_dir=_path("DAI_DOCS_DIR", "data/docs"),
             glossary_path=_path("DAI_GLOSSARY_PATH", "data/glossary.json"),
             audit_log=_path("DAI_AUDIT_LOG", "audit/audit.jsonl"),
+            db_path=_path("DAI_DB_PATH", "storage/defense.db"),
+            token_ttl_hours=float(os.environ.get("DAI_TOKEN_TTL_HOURS", "12")),
+            login_max_attempts=int(os.environ.get("DAI_LOGIN_MAX_ATTEMPTS", "5")),
+            login_lockout_minutes=int(os.environ.get("DAI_LOGIN_LOCKOUT_MINUTES", "10")),
+            cors_origins=tuple(o.strip() for o in os.environ.get("DAI_CORS_ORIGINS", "").split(",") if o.strip()),
+            admin_password=os.environ.get("DAI_ADMIN_PASSWORD") or None,
         )

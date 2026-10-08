@@ -47,6 +47,8 @@ class Session:
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     turns: int = 0
+    max_classification: Classification | None = None
+    """사용자 비밀취급인가 등급. 설정의 전역 허용 등급과 비교해 더 낮은 쪽이 적용된다."""
 
     def reset(self) -> None:
         self.messages.clear()
@@ -106,8 +108,14 @@ class DefenseAssistant:
             self._client = anthropic.Anthropic()
         return self._client
 
-    def new_session(self, user_id: str = "anonymous") -> Session:
-        return Session(user_id=user_id)
+    def new_session(self, user_id: str = "anonymous", *, max_classification: Classification | None = None) -> Session:
+        return Session(user_id=user_id, max_classification=max_classification)
+
+    def effective_max_classification(self, session: Session) -> Classification:
+        limit = self.settings.max_classification
+        if session.max_classification is not None and session.max_classification < limit:
+            limit = session.max_classification
+        return limit
 
     # ------------------------------------------------------------------
     def chat(self, session: Session, user_text: str, *, on_text: OnText | None = None, on_tool: OnTool | None = None) -> ChatResult:
@@ -125,9 +133,10 @@ class DefenseAssistant:
             classification=classification.level.name,
         )
 
-        # 1) 비밀 등급 게이트 — 모델 호출 전에 차단
-        if not classification.allowed_under(self.settings.max_classification):
-            text = block_message(classification, self.settings.max_classification)
+        # 1) 비밀 등급 게이트 — 모델 호출 전에 차단 (전역 설정과 사용자 인가 등급 중 낮은 쪽)
+        max_level = self.effective_max_classification(session)
+        if not classification.allowed_under(max_level):
+            text = block_message(classification, max_level)
             self.audit.write(AuditRecord(event="blocked", detail="classification_marking", **base))
             return ChatResult(text=text, blocked=True, classification=classification, redaction=RedactionResult(text=user_text))
 
@@ -227,13 +236,27 @@ class DefenseAssistant:
                     if on_tool is not None:
                         on_tool(block.name, dict(block.input) if isinstance(block.input, dict) else {"input": block.input})
             # 러너는 내부 기록을 노출하지 않으므로 세션 기록을 직접 복제한다.
-            new_messages.append({"role": "assistant", "content": final.content})
+            # 저장·전송이 모두 가능하도록 SDK 객체는 평범한 dict 로 바꿔 둔다.
+            new_messages.append({"role": "assistant", "content": _to_jsonable(final.content)})
             tool_response = runner.generate_tool_call_response()
             if tool_response is not None:
-                new_messages.append(tool_response)
+                new_messages.append(_to_jsonable(tool_response))
         if final is None:
             raise AssistantError("모델이 응답을 돌려주지 않았습니다.")
         return final, new_messages, tools_called
+
+
+def _to_jsonable(obj: Any) -> Any:
+    """SDK pydantic 모델을 포함한 메시지 구조를 JSON 직렬화 가능한 dict/list 로 변환한다."""
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(x) for x in obj]
+    if hasattr(obj, "__dict__") and not isinstance(obj, (str, bytes)):
+        return {k: _to_jsonable(v) for k, v in vars(obj).items() if not k.startswith("_")}
+    return obj
 
 
 def _refusal_text(final: Any) -> str:
