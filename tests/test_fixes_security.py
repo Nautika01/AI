@@ -339,3 +339,32 @@ def test_classify_redteam_gaps_detected(text, level):
 )
 def test_classify_redteam_false_positives_cleared(text):
     assert classify_text(text).level == Classification.UNCLASSIFIED
+
+
+# --- 코드 검토 지적 사항 ---------------------------------------------------------------
+
+
+def test_concept_question_check_is_linear_on_long_whitespace():
+    # 겹치는 \s* 때문에 2만 자 공백 입력이 약 10초 걸렸다(서버 스레드 점유). 길이 상한으로 막는다.
+    import time
+
+    t0 = time.perf_counter()
+    assert classify_text("II급 비밀" + " " * 19_990 + "x").level == Classification.SECRET
+    assert time.perf_counter() - t0 < 1.0
+
+
+@pytest.mark.parametrize(
+    "text,level",
+    [
+        ("CLIENT_SECRET 값", Classification.UNCLASSIFIED),
+        ("AWS SECRET_ACCESS_KEY 설정", Classification.UNCLASSIFIED),
+        ("TOP_SECRET 자료", Classification.TOP_SECRET),
+        ("C//NF 문서", Classification.CONFIDENTIAL),
+        ("int S // 합계", Classification.UNCLASSIFIED),
+        ("II급 비밀이란", Classification.UNCLASSIFIED),
+        ("II급 비밀이란 무엇인가?", Classification.UNCLASSIFIED),
+        ("Ii급 비밀이 뭐야", Classification.UNCLASSIFIED),
+    ],
+)
+def test_classify_review_followups(text, level):
+    assert classify_text(text).level == level

@@ -111,9 +111,9 @@ def _grade_patterns(level: Classification) -> list[tuple[Classification, re.Patt
 _TOP_SEP = r"[\s_-]"
 
 # 영문 표기의 앞뒤 경계. '\b' 는 한글도 단어 문자로 보아 'SECRET이라고', 'CONFIDENTIAL로' 처럼
-# 조사가 붙은 표기를 놓치므로, 영문·숫자만 경계를 막는다('SECRETARY' 는 여전히 제외).
-_A = r"(?<![A-Za-z\d])"
-_Z = r"(?![A-Za-z\d])"
+# 조사가 붙은 표기를 놓치므로, 영문·숫자·밑줄만 경계를 막는다('SECRETARY', 'CLIENT_SECRET' 은 여전히 제외).
+_A = r"(?<![A-Za-z\d_])"
+_Z = r"(?![A-Za-z\d_])"
 
 # 각 패턴은 명시적 표기만 잡도록 보수적으로 작성한다. 영문 표기는 관례대로 대문자만 인식한다.
 # ("비밀번호", "비밀스러운", "비밀취급인가", "극비리에" 같은 일상어·업무 용어에 반응하면 안 된다.)
@@ -122,16 +122,18 @@ _PATTERNS: list[tuple[Classification, re.Pattern[str]]] = [
     # I급 비밀 / 1급비밀 / 1급 기밀 / 비밀등급: I급 / 극비 / TOP SECRET / TS//
     *_grade_patterns(Classification.TOP_SECRET),
     (Classification.TOP_SECRET, re.compile(r"극비(?!리)")),
-    (Classification.TOP_SECRET, re.compile(rf"(?<![A-Za-z\d])TOP{_TOP_SEP}*SECRET(?![A-Za-z\d])")),
+    (Classification.TOP_SECRET, re.compile(rf"{_A}TOP{_TOP_SEP}*SECRET{_Z}")),
     (Classification.TOP_SECRET, re.compile(r"(?:^|[\s(\[/])TS(?:\s*//|\s*/\s*[A-Z]|\s*[\])])")),
     # II급 비밀 / 2급비밀 / 비밀등급: II급 / SECRET
     *_grade_patterns(Classification.SECRET),
     (Classification.SECRET, re.compile(rf"(?<!TOP)(?<!TOP{_TOP_SEP}){_A}SECRET{_Z}(?!\s*번호)")),
-    # 'S//NF', '//S//' 같은 배너·부분 표기. '(S)' 단독은 '(S) 사이즈' 같은 일상 표기와 겹쳐 잡지 않는다.
-    (Classification.SECRET, re.compile(r"(?:^|[\s(\[/])S\s*//")),
+    # 'S//NF', '//S//' 같은 배너·부분 표기(붙여 쓴 'S//' 만). '(S)' 단독은 '(S) 사이즈' 같은 일상 표기와,
+    # 띄어 쓴 'S //' 는 붙여넣은 코드의 주석('int S // 합계')과 겹쳐 잡지 않는다.
+    (Classification.SECRET, re.compile(r"(?:^|[\s(\[/])S//")),
     # III급 비밀 / 3급비밀 / 비밀등급: III급 / CONFIDENTIAL / 군사기밀 / 비밀문서
     *_grade_patterns(Classification.CONFIDENTIAL),
     (Classification.CONFIDENTIAL, re.compile(rf"{_A}CONFIDENTIAL{_Z}")),
+    (Classification.CONFIDENTIAL, re.compile(r"(?:^|[\s(\[/])C//")),
     # '군사기밀보호법'(법령 이름)은 표기가 아니므로 제외한다.
     (Classification.CONFIDENTIAL, re.compile(r"군사\s*(?:비밀|기밀)(?!\s*보호\s*법)")),
     # '비밀취급인가'(인사 용어)는 표기가 아니므로 제외한다.
@@ -148,8 +150,10 @@ _PATTERNS: list[tuple[Classification, re.Pattern[str]]] = [
 # 입력 전체가 [등급 용어 + 정의·차이를 묻는 말] 로만 이루어진 경우에만 예외로 둔다(fullmatch).
 # 다른 내용이 한 글자라도 붙으면('II급 비밀 문서 요약해 줘', 'II급 비밀: 작전 계획…') 그대로 차단한다.
 # '알려줘'는 '비밀(내용)을 알려줘' 로도 읽히므로 술어로 받지 않는다.
-_ANY_GRADE = r"(?:III|II|I|iii|ii|i|[123])"
+# fullmatch 라 등급 숫자는 _GRADE 와 같은 글자(I/i 1~3개, 1~3)만 받으면 된다.
+_ANY_GRADE = r"(?:[Ii]{1,3}|[123])"
 _GRADE_TERM = rf"(?:{_ANY_GRADE}\s*급\s*(?:비밀|기밀)|군사\s*(?:비밀|기밀)|TOP{_TOP_SEP}*SECRET|SECRET|CONFIDENTIAL)"
+_PREDICATE = r"(?:뭐야|뭐예요|뭐에요|뭔가요|뭐지|뭐냐|뭡니까|무엇인가요|무엇입니까|무엇인가|무엇이야|무엇|설명해\s*(?:줘|주세요|주십시오))"
 _CONCEPT_QUESTION = re.compile(
     rf"""
     {_GRADE_TERM}(?:\s*(?:과|와|및|,|하고|이랑|랑)\s*{_GRADE_TERM})*
@@ -157,9 +161,9 @@ _CONCEPT_QUESTION = re.compile(
     (?:
         \s*(?:정의|뜻|의미|개념|기준|차이점|차이|구분)
         \s*(?:이|은|는|가|을|를)?
-        (?:\s*(?:뭐야|뭐예요|뭐에요|뭔가요|뭐지|뭐냐|뭡니까|무엇인가요|무엇입니까|무엇이야|무엇|설명해\s*(?:줘|주세요|주십시오)))?
-      | \s*(?:뭐야|뭐예요|뭐에요|뭔가요|뭐지|뭐냐|뭡니까|무엇인가요|무엇입니까|무엇이야|무엇|설명해\s*(?:줘|주세요|주십시오))
-      | (?<=란)\s*(?=[?])
+        (?:\s*{_PREDICATE})?
+      | \s*{_PREDICATE}
+      | (?<=란)
     )
     \s*[?.!]*
     """,
@@ -167,9 +171,15 @@ _CONCEPT_QUESTION = re.compile(
 )
 
 
+# 개념 질문은 짧다. 길이를 먼저 자르지 않으면 겹치는 \s* 때문에 긴 공백 입력에서 매칭 시간이
+# 입력 길이의 제곱으로 늘어난다(2만 자 공백 ≈ 10초, 서버 스레드 점유).
+_CONCEPT_MAX_CHARS = 80
+
+
 def is_concept_question(text: str) -> bool:
     """입력 전체가 비밀 등급 용어의 뜻·차이를 묻는 질문뿐인지(표기가 아님) 판단한다."""
-    return _CONCEPT_QUESTION.fullmatch(normalize_for_matching(text).strip()) is not None
+    t = re.sub(r"\s+", " ", normalize_for_matching(text)).strip()
+    return len(t) <= _CONCEPT_MAX_CHARS and _CONCEPT_QUESTION.fullmatch(t) is not None
 
 
 @dataclass

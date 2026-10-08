@@ -20,7 +20,7 @@ import httpx2 as httpx
 
 from ..config import ConfigError, Settings
 from ..knowledge import DocumentStore
-from .base import BackendError, OnText, OnTool, TurnResult
+from .base import USAGE_KEYS, BackendError, OnText, OnTool, TurnResult
 
 log = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ class LocalBackend:
         request_messages = self._fit_context(prior, user_text, hits if rag_enabled else None)
         text_parts: list[str] = []
         model_name: str | None = None
-        usage: dict[str, int | None] = {"input_tokens": None, "output_tokens": None, "cache_read_input_tokens": None}
+        usage: dict[str, int | None] = dict.fromkeys(USAGE_KEYS)
         stop_reason = "tool_use"
 
         for i in range(self.settings.max_iterations):
@@ -330,7 +330,7 @@ class LocalBackend:
                 model = chunk.get("model") or model
                 if chunk.get("usage"):
                     u = chunk["usage"]
-                    usage = {"input_tokens": u.get("prompt_tokens"), "output_tokens": u.get("completion_tokens"), "cache_read_input_tokens": None}
+                    usage = {**dict.fromkeys(USAGE_KEYS), "input_tokens": u.get("prompt_tokens"), "output_tokens": u.get("completion_tokens")}
                 for choice in chunk.get("choices") or []:
                     delta = choice.get("delta") or {}
                     content = delta.get("content")

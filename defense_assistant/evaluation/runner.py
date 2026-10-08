@@ -223,7 +223,10 @@ class EvalReport:
                 lines.append(f"   ✖ {m['id']} {m['question']}  (기대: {', '.join(m['expected'])} / 결과: {', '.join(x.split(' › ')[-1] for x in m['got'][:3]) or '없음'})")
         if self.answers:
             a = self.answers
-            lines.append(f"[답변] 질문 {a['cases']}개  통과율 {_pct(a['pass_rate'])}  키워드 충족 {_pct(a['keyword_rate'])}  금지어 위반 {a['forbidden_violations']}  차단 정확도 {_pct(a['block_accuracy'])}  오류 {a['errors']}  평균 {a['avg_seconds']}초  토큰 입력 {a['total_input_tokens']}" + (f" (+캐시 읽기 {a['total_cache_read_tokens']}" + (f" · 캐시 쓰기 {a['total_cache_creation_tokens']}" if a.get("total_cache_creation_tokens") else "") + ")" if a.get("total_cache_read_tokens") or a.get("total_cache_creation_tokens") else "") + f" / 출력 {a['total_output_tokens']}")
+            # 캐시 토큰은 이전 보고서에 없을 수 있다
+            cache = [f"{label} {a[k]}" for label, k in (("캐시 읽기", "total_cache_read_tokens"), ("캐시 쓰기", "total_cache_creation_tokens")) if a.get(k)]
+            tokens = f"토큰 입력 {a['total_input_tokens']}" + (f" (+{' · '.join(cache)})" if cache else "") + f" / 출력 {a['total_output_tokens']}"
+            lines.append(f"[답변] 질문 {a['cases']}개  통과율 {_pct(a['pass_rate'])}  키워드 충족 {_pct(a['keyword_rate'])}  금지어 위반 {a['forbidden_violations']}  차단 정확도 {_pct(a['block_accuracy'])}  오류 {a['errors']}  평균 {a['avg_seconds']}초  {tokens}")
             for f in a["failures"][:10]:
                 why = f["error"] or (f"누락 {f['missed']}" if f["missed"] else "") + (f" 금지어 {f['forbidden']}" if f["forbidden"] else "") + (" 차단됨" if f["blocked"] and not f.get("expected_blocked") else "") + (" 차단 안 됨(답변 생성됨)" if f.get("expected_blocked") and not f["blocked"] else "")
                 lines.append(f"   ✖ {f['id']} {f['question']}  ({why.strip()})")

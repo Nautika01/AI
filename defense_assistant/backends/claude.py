@@ -7,12 +7,10 @@ from typing import Any
 import anthropic
 
 from ..config import Settings
-from .base import BackendError, OnText, OnTool, TurnResult, to_jsonable
+from .base import USAGE_KEYS, BackendError, OnText, OnTool, TurnResult, to_jsonable
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-# cache_read 는 캐시에서 읽은 입력(약 0.1배 단가), cache_creation 은 캐시에 새로 쓴 입력(약 1.25배 단가). 둘 다 input_tokens 에 포함되지 않는다.
-_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 REFUSAL_PLACEHOLDER = "(안전 정책에 따라 답변하지 않음)"
 EMPTY_PLACEHOLDER = "(응답 없음)"
 
@@ -66,7 +64,7 @@ class ClaudeBackend:
         runner = self.client.beta.messages.tool_runner(**self.request_params(sanitize_history(messages)))
         new_messages: list[dict[str, Any]] = []
         tools_called: list[str] = []
-        totals: dict[str, int | None] = {k: None for k in _USAGE_KEYS}
+        totals: dict[str, int | None] = {k: None for k in USAGE_KEYS}
         fallback_used = False
         final = None
         for stream in runner:
@@ -76,7 +74,7 @@ class ClaudeBackend:
             final = stream.get_final_message()
             # 툴 러너는 반복마다 새 API 호출을 하므로 사용량은 반복별로 합산한다.
             usage = getattr(final, "usage", None)
-            for key in _USAGE_KEYS:
+            for key in USAGE_KEYS:
                 val = getattr(usage, key, None)
                 if isinstance(val, int):
                     totals[key] = (totals[key] or 0) + val
