@@ -39,7 +39,8 @@ class DocMeta:
 
 def parse_front_matter(content: str) -> tuple[DocMeta, str]:
     """(메타데이터, 머리말을 뗀 본문) 을 돌려준다. 머리말이 없으면 빈 메타데이터."""
-    m = _FRONT_RE.match(content.lstrip("﻿"))
+    content = content.lstrip("﻿")  # UTF-8 BOM 은 매칭과 본문 오프셋 모두에서 제거한다
+    m = _FRONT_RE.match(content)
     if not m:
         return DocMeta(), content
     fields: dict[str, str] = {}
