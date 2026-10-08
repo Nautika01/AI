@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "defense-assistant"
-version = "0.2.0"
+version = "0.3.0"
 description = "국방 특화 생성형 AI 비서 (Defense-domain generative AI assistant built on Claude)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,8 @@ dependencies = [
     "anthropic>=1.11.0",
     "pydantic>=2.0",
     "python-dotenv>=1.0",
+    "pypdf>=4.0",
+    "olefile>=0.46",
 ]
 
 [project.optional-dependencies]

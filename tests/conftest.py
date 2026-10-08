@@ -15,8 +15,12 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="session")
-def store() -> DocumentStore:
-    return DocumentStore.from_directory(ROOT / "data" / "docs")
+def store(tmp_path_factory) -> DocumentStore:
+    """실제 실행과 같은 구성(동의어 사전 + 해시 임베딩 + 캐시)의 지식 베이스."""
+    from defense_assistant.config import build_store
+
+    settings = Settings(docs_dir=ROOT / "data" / "docs", synonyms_path=ROOT / "data" / "synonyms.json", index_cache_dir=tmp_path_factory.mktemp("index"))
+    return build_store(settings)
 
 
 @pytest.fixture(scope="session")

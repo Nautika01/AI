@@ -20,7 +20,7 @@ import anthropic
 
 from .backends import BackendError, ModelBackend
 from .backends.base import OnText, OnTool
-from .config import Settings
+from .config import Settings, build_store
 from .knowledge import DocumentStore
 from .prompts import build_local_system_prompt, build_system_prompt
 from .security import AuditLogger, AuditRecord, Classification, ClassificationResult, RedactionResult, classify_text, redact
@@ -91,7 +91,7 @@ class DefenseAssistant:
     ) -> None:
         self.settings = settings or Settings.from_env()
         self._client = client
-        self.store = store if store is not None else DocumentStore.from_directory(self.settings.docs_dir)
+        self.store = store if store is not None else build_store(self.settings)
         self.glossary = glossary if glossary is not None else load_glossary(self.settings.glossary_path)
         self.audit = audit if audit is not None else AuditLogger(self.settings.audit_log)
         self.tools = build_tools(self.store, self.glossary)
