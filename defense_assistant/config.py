@@ -66,6 +66,7 @@ class Settings:
     login_lockout_minutes: int = 10
     cors_origins: tuple[str, ...] = ()
     admin_password: str | None = None  # 최초 기동 시 관리자 계정 자동 생성용 (사용자 0명일 때만)
+    trusted_proxies: str = ""  # X-Forwarded-For 를 믿을 프록시 IP/CIDR (쉼표 구분, "*" = 전부)
     # --- 로컬 모델 (DAI_BACKEND=local) ---
     local_base_url: str = "http://127.0.0.1:11434/v1"  # Ollama 기본값. vLLM/llama-server 는 http://host:8000/v1 등
     local_model: str = "qwen2.5:7b"
@@ -74,6 +75,8 @@ class Settings:
     local_rag_top_k: int = 4
     local_timeout: float = 300.0
     local_temperature: float = 0.2
+    local_num_ctx: int | None = None  # 모델 서버 컨텍스트 길이 (None → 4096)
+    local_max_tokens: int | None = None  # 로컬 응답 최대 토큰 (None → 컨텍스트 예산으로 자동)
 
     def __post_init__(self) -> None:
         if self.effort not in _VALID_EFFORT:
@@ -98,6 +101,10 @@ class Settings:
             raise ConfigError("DAI_TOKEN_TTL_HOURS 값은 0 보다 커야 합니다")
         if self.login_max_attempts < 1 or self.login_lockout_minutes < 1:
             raise ConfigError("DAI_LOGIN_MAX_ATTEMPTS 와 DAI_LOGIN_LOCKOUT_MINUTES 는 1 이상이어야 합니다")
+        if self.local_num_ctx is not None and self.local_num_ctx < 512:
+            raise ConfigError(f"DAI_LOCAL_NUM_CTX 값은 512 이상이어야 합니다: {self.local_num_ctx}")
+        if self.local_max_tokens is not None and self.local_max_tokens < 1:
+            raise ConfigError(f"DAI_LOCAL_MAX_TOKENS 값은 1 이상이어야 합니다: {self.local_max_tokens}")
 
     @classmethod
     def from_env(cls, root: Path | None = None) -> "Settings":
@@ -144,6 +151,9 @@ class Settings:
             local_rag_top_k=_env_int("DAI_LOCAL_RAG_TOP_K", "4"),
             local_timeout=_env_float("DAI_LOCAL_TIMEOUT", "300"),
             local_temperature=_env_float("DAI_LOCAL_TEMPERATURE", "0.2"),
+            local_num_ctx=_env_int("DAI_LOCAL_NUM_CTX", "0") or None,
+            local_max_tokens=_env_int("DAI_LOCAL_MAX_TOKENS", "0") or None,
+            trusted_proxies=os.environ.get("DAI_TRUSTED_PROXIES", ""),
         )
 
 

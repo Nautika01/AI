@@ -302,7 +302,10 @@ def test_refused_turn_reopens_with_notice(make_assistant, db):
     h = login(c, "admin", "adminpass1")
     sid = c.post("/chat", json={"message": "질문"}, headers=h).json()["session_id"]
     msgs = c.get(f"/sessions/{sid}", headers=h).json()["messages"]
-    assert [m["role"] for m in msgs] == ["user", "assistant"] and msgs[1]["text"] == NO_RESPONSE_TEXT
+    # 백엔드(core 수정)가 거부 턴을 안내 문장으로 저장하므로 그 안내가 복원된다.
+    # 예전에 빈 content 로 저장된 세션은 transcript() 가 NO_RESPONSE_TEXT 로 보정한다(아래 테스트).
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert msgs[1]["text"] in (NO_RESPONSE_TEXT, "(안전 정책에 따라 답변하지 않음)") and "안전 정책" in msgs[1]["text"]
 
 
 # ---- 웹 UI: 스트리밍 종료 안내, IME 조합 중 Enter ------------------------------------

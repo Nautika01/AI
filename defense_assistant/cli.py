@@ -21,7 +21,8 @@ import sys
 from pathlib import Path
 
 from .assistant import AssistantError, DefenseAssistant
-from .config import Settings, build_store
+from .auth import MIN_PASSWORD_LENGTH
+from .config import ConfigError, Settings, build_store
 
 HELP = """명령:
   /help           도움말
@@ -88,12 +89,14 @@ def run_chat(args: argparse.Namespace) -> int:
 
         try:
             printed = False
+            streamed: list[str] = []
 
             def on_text(chunk: str) -> None:
                 nonlocal printed
                 if not printed:
                     sys.stdout.write("◀ ")
                     printed = True
+                streamed.append(chunk)
                 sys.stdout.write(chunk)
                 sys.stdout.flush()
 
@@ -107,8 +110,13 @@ def run_chat(args: argparse.Namespace) -> int:
             result = assistant.chat(session, line, on_text=on_text if stream else None, on_tool=on_tool if args.verbose else None)
             if result.blocked or not stream:
                 print("◀ " + result.text)
+            elif result.stop_reason == "refusal":
+                # 스트리밍된 부분 출력은 거부되었으므로 안내로 대체한다
+                print(("\n" if printed else "") + "◀ " + result.text)
             elif printed:
-                print()
+                shown = "".join(streamed)
+                # 잘림·도구 한도 안내처럼 스트리밍 뒤에 덧붙은 문구를 출력한다
+                print(result.text[len(shown):] if result.text.startswith(shown) else "")
             elif result.text:
                 print("◀ " + result.text)
             notes = []
@@ -148,7 +156,10 @@ def run_serve(args: argparse.Namespace) -> int:
     if db.count_users() == 0 and not settings.admin_password:
         print("등록된 사용자가 없습니다. 먼저 `defense-ai users add <아이디> --role admin` 으로 관리자를 만들거나 DAI_ADMIN_PASSWORD 를 설정하십시오.", file=sys.stderr)
         return 1
-    app = create_app(DefenseAssistant(settings), db)
+    if db.count_users() == 0 and len(settings.admin_password or "") < MIN_PASSWORD_LENGTH:
+        print(f"DAI_ADMIN_PASSWORD 는 {MIN_PASSWORD_LENGTH}자 이상이어야 합니다. 관리자 계정을 만들 수 없어 서버를 시작하지 않습니다.", file=sys.stderr)
+        return 1
+    app = create_app(DefenseAssistant(settings), db, trusted_proxies=settings.trusted_proxies or None)
     print(f"서버 시작: http://{args.host}:{args.port}  (사용자 DB: {settings.db_path})")
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
@@ -187,7 +198,9 @@ def run_local_check(args: argparse.Namespace) -> int:
         print(f"  ✖ {e}")
         return 1
     preview = turn.text.strip().replace("\n", " ")
-    print(f"  ✔ 응답 수신 ({len(turn.text)}자, 도구 {turn.tools_called}, 함수 호출 지원: {'예' if backend._tools_supported else '아니오/미확인'})")
+    tools_state = "예" if backend._tools_supported else ("아니오" + (f" — {backend.tools_disabled_reason}" if backend.tools_disabled_reason else "") if backend._tools_supported is False else "미확인")
+    print(f"  ✔ 응답 수신 ({len(turn.text)}자, 도구 {turn.tools_called}, 함수 호출 지원: {tools_state})")
+    print(f"  ℹ 컨텍스트 {backend.num_ctx} 토큰 가정 (입력 예산 {backend.input_budget}). 서버 설정과 다르면 DAI_LOCAL_NUM_CTX 로 맞추십시오.")
     print(f"  ▶ {preview[:200]}{'…' if len(preview) > 200 else ''}")
     print("점검 완료. .env 에 DAI_BACKEND=local 을 설정하면 이 모델로 동작합니다.")
     return 0
@@ -422,6 +435,14 @@ def main(argv: list[str] | None = None) -> int:
         args.command = "chat"
         args.user = "anonymous"
         args.no_stream = False
+    try:
+        return _dispatch(args, parser)
+    except ConfigError as e:
+        print(f"설정 오류: {e}", file=sys.stderr)
+        return 1
+
+
+def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.command == "chat":
         return run_chat(args)
     if args.command == "search":

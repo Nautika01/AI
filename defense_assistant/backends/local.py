@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx2 as httpx
 
-from ..config import Settings
+from ..config import ConfigError, Settings
 from ..knowledge import DocumentStore
 from .base import BackendError, OnText, OnTool, TurnResult
 
@@ -68,7 +68,7 @@ def _int_setting(settings: Settings, attr: str, env: str, default: int | None) -
             try:
                 value = int(raw)
             except ValueError as e:
-                raise ValueError(f"{env} must be an integer, got {raw!r}") from e
+                raise ConfigError(f"{env} 값은 정수여야 합니다: {raw!r}") from e
     return default if value is None else int(value)
 
 
@@ -94,10 +94,10 @@ class LocalBackend:
         # --- 컨텍스트 예산: 입력(시스템+이력+질문+도구 정의) + 출력(max_tokens) <= num_ctx ---
         self.num_ctx = _int_setting(settings, "local_num_ctx", "DAI_LOCAL_NUM_CTX", DEFAULT_LOCAL_NUM_CTX) or DEFAULT_LOCAL_NUM_CTX
         if self.num_ctx < _MIN_NUM_CTX:
-            raise ValueError(f"DAI_LOCAL_NUM_CTX must be >= {_MIN_NUM_CTX}")
+            raise ConfigError(f"DAI_LOCAL_NUM_CTX 값은 {_MIN_NUM_CTX} 이상이어야 합니다: {self.num_ctx}")
         explicit_max = _int_setting(settings, "local_max_tokens", "DAI_LOCAL_MAX_TOKENS", None)
         if explicit_max is not None and explicit_max < 1:
-            raise ValueError("DAI_LOCAL_MAX_TOKENS must be >= 1")
+            raise ConfigError(f"DAI_LOCAL_MAX_TOKENS 값은 1 이상이어야 합니다: {explicit_max}")
         self._max_tokens_cap = min(settings.max_tokens, explicit_max) if explicit_max else settings.max_tokens
         reserve = min(self._max_tokens_cap, explicit_max or self.num_ctx // 4, self.num_ctx // 2)
         self.input_budget = self.num_ctx - reserve
@@ -162,7 +162,11 @@ class LocalBackend:
             chunk_text, tool_calls, finish, model_name, chunk_usage = self._stream_completion(request_messages, on_text)
             text_parts.append(chunk_text)
             if chunk_usage:
-                usage = chunk_usage
+                # 도구를 쓴 턴은 요청이 여러 번이므로 반복별 토큰을 합산한다 (None 은 '보고 없음')
+                for k in ("input_tokens", "output_tokens"):
+                    v = chunk_usage.get(k)
+                    if v is not None:
+                        usage[k] = (usage[k] or 0) + v
             if not tool_calls:
                 stop_reason = "max_tokens" if finish == "length" else "end_turn"
                 break

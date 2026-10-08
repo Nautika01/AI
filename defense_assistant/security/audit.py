@@ -62,7 +62,6 @@ class AuditLogger:
     def write(self, record: AuditRecord) -> None:
         data = (json.dumps(record.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
         with self._lock:
-            self.records.append(record)
             if self.path:
                 with self.path.open("a+b") as f:
                     # 이전 기록이 개행 없이 잘려 있으면(쓰기 중 비정상 종료) 줄을 먼저 닫아 새 기록이 붙지 않게 한다
@@ -72,6 +71,8 @@ class AuditLogger:
                         if f.read(1) != b"\n":
                             data = b"\n" + data
                     f.write(data)  # 한 번에 써서 다른 기록과 섞이지 않게 한다
+            # 파일 쓰기가 성공한 뒤에만 메모리에도 남겨, 실패 시 두 기록이 어긋나지 않게 한다
+            self.records.append(record)
 
     def read_all(self) -> list[dict[str, Any]]:
         """기록 전체를 읽는다. 손상된 줄은 건너뛰지 않고 `event="corrupt"` 항목으로 표시한다."""
