@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
-dev = ["pytest>=8.0", "fastapi>=0.110", "httpx2"]
+dev = ["pytest>=8.0", "fastapi>=0.110", "uvicorn>=0.29", "httpx2"]
 
 [project.scripts]
 defense-ai = "defense_assistant.cli:main"

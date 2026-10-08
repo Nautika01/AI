@@ -17,6 +17,7 @@ _VALID_EFFORT = {"low", "medium", "high", "xhigh", "max"}
 
 @dataclass
 class Settings:
+    backend: str = "claude"  # "claude" | "local"
     model: str = "claude-opus-5-5"
     effort: str = "high"
     max_tokens: int = 16000
@@ -34,6 +35,14 @@ class Settings:
     login_lockout_minutes: int = 10
     cors_origins: tuple[str, ...] = ()
     admin_password: str | None = None  # 최초 기동 시 관리자 계정 자동 생성용 (사용자 0명일 때만)
+    # --- 로컬 모델 (DAI_BACKEND=local) ---
+    local_base_url: str = "http://127.0.0.1:11434/v1"  # Ollama 기본값. vLLM/llama-server 는 http://host:8000/v1 등
+    local_model: str = "qwen2.5:7b"
+    local_api_key: str | None = None
+    local_tools: str = "auto"  # "auto" | "off"
+    local_rag_top_k: int = 4
+    local_timeout: float = 300.0
+    local_temperature: float = 0.2
 
     def __post_init__(self) -> None:
         if self.effort not in _VALID_EFFORT:
@@ -46,6 +55,12 @@ class Settings:
             raise ValueError("DAI_MAX_TOKENS must be >= 256")
         if self.max_iterations < 1:
             raise ValueError("DAI_MAX_ITERATIONS must be >= 1")
+        if self.backend not in {"claude", "local"}:
+            raise ValueError("DAI_BACKEND must be 'claude' or 'local'")
+        if self.local_tools not in {"auto", "off"}:
+            raise ValueError("DAI_LOCAL_TOOLS must be 'auto' or 'off'")
+        if self.local_rag_top_k < 0 or self.local_timeout <= 0:
+            raise ValueError("DAI_LOCAL_RAG_TOP_K must be >= 0 and DAI_LOCAL_TIMEOUT > 0")
         if self.token_ttl_hours <= 0:
             raise ValueError("DAI_TOKEN_TTL_HOURS must be > 0")
         if self.login_max_attempts < 1 or self.login_lockout_minutes < 1:
@@ -61,6 +76,7 @@ class Settings:
             return p if p.is_absolute() else root / p
 
         return cls(
+            backend=os.environ.get("DAI_BACKEND", "claude").strip().lower(),
             model=os.environ.get("DAI_MODEL", "claude-opus-5-5"),
             effort=os.environ.get("DAI_EFFORT", "high"),
             max_tokens=int(os.environ.get("DAI_MAX_TOKENS", "16000")),
@@ -77,4 +93,11 @@ class Settings:
             login_lockout_minutes=int(os.environ.get("DAI_LOGIN_LOCKOUT_MINUTES", "10")),
             cors_origins=tuple(o.strip() for o in os.environ.get("DAI_CORS_ORIGINS", "").split(",") if o.strip()),
             admin_password=os.environ.get("DAI_ADMIN_PASSWORD") or None,
+            local_base_url=os.environ.get("DAI_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1"),
+            local_model=os.environ.get("DAI_LOCAL_MODEL", "qwen2.5:7b"),
+            local_api_key=os.environ.get("DAI_LOCAL_API_KEY") or None,
+            local_tools=os.environ.get("DAI_LOCAL_TOOLS", "auto").strip().lower(),
+            local_rag_top_k=int(os.environ.get("DAI_LOCAL_RAG_TOP_K", "4")),
+            local_timeout=float(os.environ.get("DAI_LOCAL_TIMEOUT", "300")),
+            local_temperature=float(os.environ.get("DAI_LOCAL_TEMPERATURE", "0.2")),
         )
