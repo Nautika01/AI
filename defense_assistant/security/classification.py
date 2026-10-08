@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import IntEnum
 
@@ -32,7 +33,8 @@ class Classification(IntEnum):
             return value
         if isinstance(value, int):
             return cls(value)
-        key = value.strip().upper().replace(" ", "_").replace("-", "_")
+        # 'Ⅱ급'(U+2161)·전각 'ＳＥＣＲＥＴ' 같은 호환 문자도 같은 별칭으로 받는다.
+        key = normalize_for_matching(value).strip().upper().replace(" ", "_").replace("-", "_")
         aliases = {
             "UNCLASSIFIED": cls.UNCLASSIFIED,
             "U": cls.UNCLASSIFIED,
@@ -68,22 +70,63 @@ _KOREAN_NAMES = {
     Classification.TOP_SECRET: "I급 비밀",
 }
 
+# NFKC 가 바꾸지 않는 각종 대시·마이너스 기호(‐ – — − 등)를 '-' 로 맞춘다.
+_DASHES = str.maketrans({ch: "-" for ch in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d"})
+
+
+def normalize_for_matching(text: str) -> str:
+    """표기 탐지용 정규화 사본을 만든다(원문은 바꾸지 않는다).
+
+    - NFKC: 유니코드 로마숫자 'Ⅱ'(U+2161) → 'II', 전각 'ＳＥＣＲＥＴ' → 'SECRET', '：' → ':'
+    - 서식 문자(Cf: U+200B 제로폭 공백, U+00AD 소프트하이픈, U+FEFF 등) 제거
+    - 각종 대시(–, — 등)를 '-' 로 통일
+    """
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return text.translate(_DASHES)
+
+
+# 등급 숫자 토큰: I/II/III(로마숫자, NFKC 후 ASCII) 또는 1/2/3. 'IV', '12' 등은 제외한다.
+_GRADE = {
+    Classification.TOP_SECRET: r"(?:(?<![IVX\d])I(?![IVX])|(?<!\d)1(?!\d))",
+    Classification.SECRET: r"(?:(?<![IVX\d])II(?![IVX])|(?<!\d)2(?!\d))",
+    Classification.CONFIDENTIAL: r"(?:(?<![IVX\d])III(?![IVX])|(?<!\d)3(?!\d))",
+}
+
+
+def _grade_patterns(level: Classification) -> list[tuple[Classification, re.Pattern[str]]]:
+    g = _GRADE[level]
+    return [
+        # II급 비밀 / 2급비밀 / II급 기밀
+        (level, re.compile(rf"{g}\s*급\s*(?:비밀|기밀)")),
+        # 표지·결재란 형식: '비밀등급: II급' (콜론 필수 — '비밀등급 체계' 같은 질문은 제외)
+        (level, re.compile(rf"비밀\s*등급\s*:\s*{g}\s*급")),
+        # 괄호 형식: '비밀(II급)'
+        (level, re.compile(rf"비밀\s*\(\s*{g}\s*급\s*\)")),
+    ]
+
+
+# TOP 과 SECRET 사이 구분자: 공백·밑줄·하이픈(정규화 후 대시는 모두 '-')
+_TOP_SEP = r"[\s_-]"
+
 # 각 패턴은 명시적 표기만 잡도록 보수적으로 작성한다. 영문 표기는 관례대로 대문자만 인식한다.
-# ("비밀번호", "비밀스러운" 같은 일상어에 반응하면 안 된다.)
+# ("비밀번호", "비밀스러운", "비밀취급인가", "극비리에" 같은 일상어·업무 용어에 반응하면 안 된다.)
+# 패턴은 normalize_for_matching() 을 거친 텍스트에 적용한다.
 _PATTERNS: list[tuple[Classification, re.Pattern[str]]] = [
-    # I급 비밀 / 1급비밀 / 1급 기밀 / 극비 / TOP SECRET / TS//
-    (Classification.TOP_SECRET, re.compile(r"(?:(?<![IVX\d])I(?![IVX])|(?<!\d)1(?!\d))\s*급\s*(?:비밀|기밀)")),
-    (Classification.TOP_SECRET, re.compile(r"극비")),
-    (Classification.TOP_SECRET, re.compile(r"\bTOP\s*SECRET\b")),
+    # I급 비밀 / 1급비밀 / 1급 기밀 / 비밀등급: I급 / 극비 / TOP SECRET / TS//
+    *_grade_patterns(Classification.TOP_SECRET),
+    (Classification.TOP_SECRET, re.compile(r"극비(?!리)")),
+    (Classification.TOP_SECRET, re.compile(rf"(?<![A-Za-z\d])TOP{_TOP_SEP}*SECRET(?![A-Za-z\d])")),
     (Classification.TOP_SECRET, re.compile(r"(?:^|[\s(\[/])TS(?:\s*//|\s*/\s*[A-Z]|\s*[\])])")),
-    # II급 비밀 / 2급비밀 / SECRET
-    (Classification.SECRET, re.compile(r"(?:(?<![IVX\d])II(?![IVX])|(?<!\d)2(?!\d))\s*급\s*(?:비밀|기밀)")),
-    (Classification.SECRET, re.compile(r"(?<!TOP )(?<!TOP)\bSECRET\b(?!\s*번호)")),
-    # III급 비밀 / 3급비밀 / CONFIDENTIAL / 군사기밀 / 비밀문서
-    (Classification.CONFIDENTIAL, re.compile(r"(?:(?<![IVX\d])III(?![IVX])|(?<!\d)3(?!\d))\s*급\s*(?:비밀|기밀)")),
+    # II급 비밀 / 2급비밀 / 비밀등급: II급 / SECRET
+    *_grade_patterns(Classification.SECRET),
+    (Classification.SECRET, re.compile(rf"(?<!TOP)(?<!TOP{_TOP_SEP})\bSECRET\b(?!\s*번호)")),
+    # III급 비밀 / 3급비밀 / 비밀등급: III급 / CONFIDENTIAL / 군사기밀 / 비밀문서
+    *_grade_patterns(Classification.CONFIDENTIAL),
     (Classification.CONFIDENTIAL, re.compile(r"\bCONFIDENTIAL\b")),
     (Classification.CONFIDENTIAL, re.compile(r"군사\s*(?:비밀|기밀)")),
-    (Classification.CONFIDENTIAL, re.compile(r"비밀\s*(?:문서|자료|취급|등급\s*[:：]\s*(?:비밀|기밀))")),
+    # '비밀취급인가'(인사 용어)는 표기가 아니므로 제외한다.
+    (Classification.CONFIDENTIAL, re.compile(r"비밀\s*(?:문서|자료|취급(?!\s*인가)|등급\s*:\s*(?:비밀|기밀))")),
     # 대외비 / RESTRICTED / FOUO
     (Classification.RESTRICTED, re.compile(r"대외비")),
     (Classification.RESTRICTED, re.compile(r"\bRESTRICTED\b")),
@@ -106,7 +149,12 @@ class ClassificationResult:
 
 
 def classify_text(text: str) -> ClassificationResult:
-    """텍스트에서 가장 높은 비밀 등급 표기를 찾는다. 표기가 없으면 UNCLASSIFIED."""
+    """텍스트에서 가장 높은 비밀 등급 표기를 찾는다. 표기가 없으면 UNCLASSIFIED.
+
+    매칭은 정규화 사본(normalize_for_matching)에 대해 수행하므로 markings 에는
+    정규화된 표기('Ⅱ급비밀' → 'II급비밀')가 담긴다.
+    """
+    text = normalize_for_matching(text)
     highest = Classification.UNCLASSIFIED
     markings: list[str] = []
     for level, pattern in _PATTERNS:
