@@ -87,10 +87,11 @@ def normalize_for_matching(text: str) -> str:
 
 
 # 등급 숫자 토큰: I/II/III(로마숫자, NFKC 후 ASCII) 또는 1/2/3. 'IV', '12' 등은 제외한다.
+# 소문자 로마숫자 'ⅱ'(U+2171)는 NFKC 후 'ii' 가 되므로 소문자도 받는다(받지 않으면 'ⅱ급 비밀 문서' 가 III급으로 낮게 판정된다).
 _GRADE = {
-    Classification.TOP_SECRET: r"(?:(?<![IVX\d])I(?![IVX])|(?<!\d)1(?!\d))",
-    Classification.SECRET: r"(?:(?<![IVX\d])II(?![IVX])|(?<!\d)2(?!\d))",
-    Classification.CONFIDENTIAL: r"(?:(?<![IVX\d])III(?![IVX])|(?<!\d)3(?!\d))",
+    Classification.TOP_SECRET: r"(?:(?<![IVXivx\d])[Ii](?![IVXivx])|(?<!\d)1(?!\d))",
+    Classification.SECRET: r"(?:(?<![IVXivx\d])[Ii]{2}(?![IVXivx])|(?<!\d)2(?!\d))",
+    Classification.CONFIDENTIAL: r"(?:(?<![IVXivx\d])[Ii]{3}(?![IVXivx])|(?<!\d)3(?!\d))",
 }
 
 
@@ -109,6 +110,11 @@ def _grade_patterns(level: Classification) -> list[tuple[Classification, re.Patt
 # TOP 과 SECRET 사이 구분자: 공백·밑줄·하이픈(정규화 후 대시는 모두 '-')
 _TOP_SEP = r"[\s_-]"
 
+# 영문 표기의 앞뒤 경계. '\b' 는 한글도 단어 문자로 보아 'SECRET이라고', 'CONFIDENTIAL로' 처럼
+# 조사가 붙은 표기를 놓치므로, 영문·숫자만 경계를 막는다('SECRETARY' 는 여전히 제외).
+_A = r"(?<![A-Za-z\d])"
+_Z = r"(?![A-Za-z\d])"
+
 # 각 패턴은 명시적 표기만 잡도록 보수적으로 작성한다. 영문 표기는 관례대로 대문자만 인식한다.
 # ("비밀번호", "비밀스러운", "비밀취급인가", "극비리에" 같은 일상어·업무 용어에 반응하면 안 된다.)
 # 패턴은 normalize_for_matching() 을 거친 텍스트에 적용한다.
@@ -120,18 +126,21 @@ _PATTERNS: list[tuple[Classification, re.Pattern[str]]] = [
     (Classification.TOP_SECRET, re.compile(r"(?:^|[\s(\[/])TS(?:\s*//|\s*/\s*[A-Z]|\s*[\])])")),
     # II급 비밀 / 2급비밀 / 비밀등급: II급 / SECRET
     *_grade_patterns(Classification.SECRET),
-    (Classification.SECRET, re.compile(rf"(?<!TOP)(?<!TOP{_TOP_SEP})\bSECRET\b(?!\s*번호)")),
+    (Classification.SECRET, re.compile(rf"(?<!TOP)(?<!TOP{_TOP_SEP}){_A}SECRET{_Z}(?!\s*번호)")),
+    # 'S//NF', '//S//' 같은 배너·부분 표기. '(S)' 단독은 '(S) 사이즈' 같은 일상 표기와 겹쳐 잡지 않는다.
+    (Classification.SECRET, re.compile(r"(?:^|[\s(\[/])S\s*//")),
     # III급 비밀 / 3급비밀 / 비밀등급: III급 / CONFIDENTIAL / 군사기밀 / 비밀문서
     *_grade_patterns(Classification.CONFIDENTIAL),
-    (Classification.CONFIDENTIAL, re.compile(r"\bCONFIDENTIAL\b")),
-    (Classification.CONFIDENTIAL, re.compile(r"군사\s*(?:비밀|기밀)")),
+    (Classification.CONFIDENTIAL, re.compile(rf"{_A}CONFIDENTIAL{_Z}")),
+    # '군사기밀보호법'(법령 이름)은 표기가 아니므로 제외한다.
+    (Classification.CONFIDENTIAL, re.compile(r"군사\s*(?:비밀|기밀)(?!\s*보호\s*법)")),
     # '비밀취급인가'(인사 용어)는 표기가 아니므로 제외한다.
     (Classification.CONFIDENTIAL, re.compile(r"비밀\s*(?:문서|자료|취급(?!\s*인가)|등급\s*:\s*(?:비밀|기밀))")),
     # 대외비 / RESTRICTED / FOUO
     (Classification.RESTRICTED, re.compile(r"대외비")),
-    (Classification.RESTRICTED, re.compile(r"\bRESTRICTED\b")),
-    (Classification.RESTRICTED, re.compile(r"\bFOUO\b")),
-    (Classification.RESTRICTED, re.compile(r"\bFOR\s+OFFICIAL\s+USE\s+ONLY\b")),
+    (Classification.RESTRICTED, re.compile(rf"{_A}RESTRICTED{_Z}")),
+    (Classification.RESTRICTED, re.compile(rf"{_A}FOUO{_Z}")),
+    (Classification.RESTRICTED, re.compile(rf"{_A}FOR\s+OFFICIAL\s+USE\s+ONLY{_Z}")),
 ]
 
 
@@ -139,8 +148,8 @@ _PATTERNS: list[tuple[Classification, re.Pattern[str]]] = [
 # 입력 전체가 [등급 용어 + 정의·차이를 묻는 말] 로만 이루어진 경우에만 예외로 둔다(fullmatch).
 # 다른 내용이 한 글자라도 붙으면('II급 비밀 문서 요약해 줘', 'II급 비밀: 작전 계획…') 그대로 차단한다.
 # '알려줘'는 '비밀(내용)을 알려줘' 로도 읽히므로 술어로 받지 않는다.
-_ANY_GRADE = r"(?:III|II|I|[123])"
-_GRADE_TERM = rf"{_ANY_GRADE}\s*급\s*(?:비밀|기밀)"
+_ANY_GRADE = r"(?:III|II|I|iii|ii|i|[123])"
+_GRADE_TERM = rf"(?:{_ANY_GRADE}\s*급\s*(?:비밀|기밀)|군사\s*(?:비밀|기밀)|TOP{_TOP_SEP}*SECRET|SECRET|CONFIDENTIAL)"
 _CONCEPT_QUESTION = re.compile(
     rf"""
     {_GRADE_TERM}(?:\s*(?:과|와|및|,|하고|이랑|랑)\s*{_GRADE_TERM})*

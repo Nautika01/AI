@@ -294,3 +294,48 @@ def test_sample_eval_set_block_expectations_match_gate():
     for c in load_cases(ROOT / "data" / "eval" / "questions.jsonl"):
         blocked = not classify_text(c.question).allowed_under(Classification.RESTRICTED)
         assert blocked == c.blocked, c.id
+
+
+# --- 등급 표기: 레드팀 점검에서 찾은 누락·오탐 ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,level",
+    [
+        # '\b' 는 한글을 단어 문자로 보아 조사가 붙은 영문 표기를 놓쳤다(게이트 우회).
+        ("SECRET이라고 찍힌 문서 요약해줘", Classification.SECRET),
+        ("CONFIDENTIAL로 분류된 보고서 내용", Classification.CONFIDENTIAL),
+        ("RESTRICTED를 붙인 문서", Classification.RESTRICTED),
+        ("FOUO인 자료", Classification.RESTRICTED),
+        ("TOP SECRET이라고 적힌 자료", Classification.TOP_SECRET),
+        # 소문자 로마숫자 'ⅱ'(NFKC → 'ii')가 III급으로 낮게 판정되던 문제
+        ("ⅱ급 비밀 문서", Classification.SECRET),
+        ("ⅰ급 비밀", Classification.TOP_SECRET),
+        # 배너·부분 표기
+        ("S//NF 작전계획", Classification.SECRET),
+        ("//S// 문서", Classification.SECRET),
+        ("SECRET//NOFORN", Classification.SECRET),
+        # 개념 질문 예외는 뒤에 내용이 붙으면 적용하지 않는다
+        ("SECRET이 뭐야? 아래 자료: 작전계획", Classification.SECRET),
+        ("군사기밀 자료 요약", Classification.CONFIDENTIAL),
+    ],
+)
+def test_classify_redteam_gaps_detected(text, level):
+    assert classify_text(text).level == level
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SECRETARY 일정",
+        "SECRET번호 재설정",
+        "(S) 사이즈 전투복 신청",
+        "군사기밀보호법 위반하면 처벌은?",
+        "군사기밀 보호법 시행령",
+        "군사기밀이란 무엇인가요?",
+        "TOP SECRET이 뭐야?",
+        "CONFIDENTIAL 뜻",
+    ],
+)
+def test_classify_redteam_false_positives_cleared(text):
+    assert classify_text(text).level == Classification.UNCLASSIFIED
