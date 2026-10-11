@@ -310,3 +310,29 @@ def test_glossary_entry_missing_field_does_not_break_lookup(tmp_path):
     assert "OPORD" in lookup_term(g, "작전")
     # load_glossary 를 거치지 않은 사전에서도 부분 일치 조회가 KeyError 로 실패하지 않는다
     assert "XYZ" in lookup_term({"XYZ": {"full": "Xray", "desc": "d"}}, "xr")
+
+
+# --- 거절 안내문: 영문 정책 설명·지원 사이트 주소를 사용자에게 보이지 않음 -----------------
+
+
+def test_refusal_notice_is_korean_and_hides_english_explanation(make_assistant):
+    msg = make_message("", stop_reason="refusal")
+    msg.stop_details = SimpleNamespace(
+        category="general_harms",
+        explanation="This request triggered restrictions ... visit our help center: https://support.claude.com/",
+    )
+    assistant, _ = make_assistant([msg])
+    r = assistant.chat(assistant.new_session(), "질문")
+    assert r.text.startswith("요청하신 내용은 안전 정책에 따라 답변할 수 없습니다.")
+    assert "무기·폭발물" in r.text
+    assert "http" not in r.text and "This request" not in r.text and "general_harms" not in r.text
+    # 운영자는 감사 로그에서 원문을 확인한다
+    assert "general_harms" in assistant.audit.records[-1].detail and "support.claude.com" in assistant.audit.records[-1].detail
+
+
+@pytest.mark.parametrize("category", [None, "새로운_분류"])
+def test_refusal_notice_without_known_category(category):
+    from defense_assistant.assistant import refusal_notice
+
+    text = refusal_notice(category)
+    assert text.startswith("요청하신 내용은 안전 정책에 따라 답변할 수 없습니다.") and "분류되었습니다" not in text

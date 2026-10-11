@@ -30,7 +30,8 @@ class TurnResult:
     model: str | None = None
     usage: dict[str, int | None] = field(default_factory=dict)
     fallback_used: bool = False
-    refusal_detail: str | None = None
+    refusal_detail: str | None = None  # 감사 로그용 원문(분류 — 영문 설명)
+    refusal_category: str | None = None  # stop_details.category (cyber, bio, general_harms 등)
 
 
 class ModelBackend(Protocol):

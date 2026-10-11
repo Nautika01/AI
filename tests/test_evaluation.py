@@ -123,5 +123,5 @@ def test_cli_eval_with_answers_uses_assistant(tmp_path, monkeypatch, make_assist
     out = tmp_path / "a.json"
     assert cli.main(["--root", str(ROOT), "eval", "--answers", "--category", "경계", "--out", str(out)]) == 0
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["answers"]["cases"] == 4 and data["model"] == "claude-opus-5-5"
+    assert data["answers"]["cases"] == 4 and data["model"] == "claude-sonnet-5-5"
     assert {r["id"]: r["passed"] for r in data["answers"]["results"]}["q01"] is True

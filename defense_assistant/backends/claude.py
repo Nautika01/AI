@@ -112,11 +112,11 @@ class ClaudeBackend:
         if final is None:
             raise BackendError("모델이 응답을 돌려주지 않았습니다.")
 
-        refusal_detail = None
+        refusal_detail = refusal_category = None
         if final.stop_reason == "refusal":
             details = getattr(final, "stop_details", None)
             if details is not None:
-                cat = getattr(details, "category", None)
+                cat = refusal_category = getattr(details, "category", None)
                 expl = getattr(details, "explanation", None)
                 refusal_detail = f"{cat or '미분류'}{' — ' + expl if expl else ''}"
         return TurnResult(
@@ -128,6 +128,7 @@ class ClaudeBackend:
             usage=totals,
             fallback_used=fallback_used,
             refusal_detail=refusal_detail,
+            refusal_category=refusal_category,
         )
 
 
