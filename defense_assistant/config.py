@@ -42,7 +42,7 @@ def _env_float(name: str, default: str) -> float:
 @dataclass
 class Settings:
     backend: str = "claude"  # "claude" | "local"
-    model: str = "claude-opus-5-5"
+    model: str = "claude-sonnet-5-5"
     effort: str = "high"
     max_tokens: int = 16000
     max_iterations: int = 12
@@ -122,7 +122,7 @@ class Settings:
 
         return cls(
             backend=os.environ.get("DAI_BACKEND", "claude").strip().lower(),
-            model=os.environ.get("DAI_MODEL", "claude-opus-5-5"),
+            model=os.environ.get("DAI_MODEL", "claude-sonnet-5-5"),
             effort=_env_str("DAI_EFFORT", "high"),
             max_tokens=_env_int("DAI_MAX_TOKENS", "16000"),
             max_iterations=_env_int("DAI_MAX_ITERATIONS", "12"),

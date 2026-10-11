@@ -153,7 +153,7 @@ print(result.tools_called, result.usage)
 |---|---|---|
 | `DAI_BACKEND` | `claude` | 모델 백엔드 `claude` / `local`. 로컬 모델 항목은 [docs/로컬모델.md](docs/로컬모델.md) |
 | `ANTHROPIC_API_KEY` | – | API 키 (또는 `ant auth login`). 로컬 모드에서는 불필요 |
-| `DAI_MODEL` | `claude-opus-5-5` | 모델 ID |
+| `DAI_MODEL` | `claude-sonnet-5-5` | 모델 ID. 더 높은 품질이 필요하면 `claude-opus-5-5` (비용 약 2.3배, [평가 결과](docs/평가결과.md) 참고) |
 | `DAI_EFFORT` | `high` | 추론 깊이 `low/medium/high/xhigh/max` |
 | `DAI_MAX_TOKENS` | `16000` | 응답 최대 토큰 |
 | `DAI_MAX_ITERATIONS` | `12` | 한 턴 최대 도구 호출 반복 |

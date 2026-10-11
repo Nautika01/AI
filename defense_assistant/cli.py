@@ -357,7 +357,7 @@ def _add_global_options(p: argparse.ArgumentParser, default: object = None) -> N
     kw = {} if default is None else {"default": default}
     p.add_argument("--root", help="프로젝트 루트 (data/, audit/ 상대 경로 기준)", **kw)
     p.add_argument("--backend", choices=["claude", "local"], help="모델 백엔드 (기본: DAI_BACKEND 또는 claude)", **kw)
-    p.add_argument("--model", help="모델 ID (claude: 기본 claude-opus-5-5 / local: DAI_LOCAL_MODEL)", **kw)
+    p.add_argument("--model", help="모델 ID (claude: 기본 claude-sonnet-5-5 / local: DAI_LOCAL_MODEL)", **kw)
     p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], help="추론 깊이", **kw)
     p.add_argument("--no-fallback", action="store_true", help="서버측 안전장치 폴백 비활성화", **kw)
     p.add_argument("-v", "--verbose", action="store_true", help="도구 호출·토큰 사용량 표시", **kw)

@@ -32,6 +32,27 @@ from .tools.glossary import load_glossary
 log = logging.getLogger(__name__)
 
 
+# 모델 제공사 안전 분류기가 거절한 경우의 사유 분류(stop_details.category) → 사용자에게 보여 줄 한국어 설명.
+# 분류기가 주는 영문 설명과 지원 사이트 주소는 장병에게 의미가 없으므로 보여 주지 않고 감사 로그에만 남긴다.
+_REFUSAL_REASONS = {
+    "cyber": "해킹·사이버 공격에 악용될 수 있는 내용",
+    "bio": "생물·화학 무기와 관련된 내용",
+    "general_harms": "무기·폭발물 등 인명 피해로 이어질 수 있는 내용",
+    "frontier_llm": "AI 모델 개발과 관련해 제한된 내용",
+    "reasoning_extraction": "AI 의 내부 추론 과정 공개 요청",
+}
+
+
+def refusal_notice(category: str | None) -> str:
+    """안전 분류기가 거절한 턴에 보여 줄 한국어 안내문."""
+    reason = _REFUSAL_REASONS.get(category or "")
+    return (
+        "요청하신 내용은 안전 정책에 따라 답변할 수 없습니다."
+        + (f" ({reason}으로 분류되었습니다.)" if reason else "")
+        + " 교리·절차·안전 수칙처럼 업무에 필요한 내용이라면 질문을 바꾸어 다시 문의해 주십시오."
+    )
+
+
 class AssistantError(RuntimeError):
     """모델 호출 실패를 한국어 메시지로 감싼 예외."""
 
@@ -110,7 +131,7 @@ class DefenseAssistant:
 
     @property
     def model_label(self) -> str:
-        """표시용 모델 이름 (claude-opus-5-5, local:qwen2.5:7b 등)."""
+        """표시용 모델 이름 (claude-sonnet-5-5, local:qwen2.5:7b 등)."""
         return self.backend.label
 
     def new_session(self, user_id: str = "anonymous", *, max_classification: Classification | None = None) -> Session:
@@ -172,7 +193,7 @@ class DefenseAssistant:
         # 4) 종료 사유 처리
         text = turn.text
         if turn.stop_reason == "refusal":
-            text = "요청하신 내용은 안전 정책에 따라 답변할 수 없습니다." + (f" (사유: {turn.refusal_detail})" if turn.refusal_detail else "") + " 질문을 바꾸어 다시 문의해 주십시오."
+            text = refusal_notice(turn.refusal_category)
         elif turn.stop_reason == "max_tokens":
             text += "\n\n(응답이 최대 길이에 도달해 잘렸습니다. 이어서 답하도록 요청해 주십시오.)"
         elif turn.stop_reason == "model_context_window_exceeded":
@@ -206,6 +227,8 @@ class DefenseAssistant:
             cache_creation_tokens=turn.usage.get("cache_creation_input_tokens"),
             output_sha256=sha256_text(text),
             output_chars=len(text),
+            # 거절 사유 원문(영문 정책 설명)은 사용자에게 보이지 않고 운영자가 감사 로그에서 확인한다
+            detail=f"refusal: {turn.refusal_detail}" if turn.stop_reason == "refusal" and turn.refusal_detail else None,
             **base,
         )
         try:

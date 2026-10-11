@@ -10,7 +10,7 @@ def test_request_params_shape(make_assistant):
     session = assistant.new_session("u1")
     assistant.chat(session, "안녕하세요")
     p = client.calls[0]
-    assert p["model"] == "claude-opus-5-5"
+    assert p["model"] == "claude-sonnet-5-5"
     assert p["thinking"] == {"type": "adaptive"}
     assert p["output_config"] == {"effort": "high"}
     assert p["stream"] is True
@@ -100,7 +100,9 @@ def test_tool_calls_are_executed_and_recorded(make_assistant):
 def test_refusal_and_max_tokens_and_fallback(make_assistant):
     assistant, _ = make_assistant([make_message("", stop_reason="refusal")])
     r = assistant.chat(assistant.new_session(), "질문")
-    assert "안전 정책" in r.text and "cyber" in r.text
+    # 사용자에게는 한국어 분류 설명만, 분류기 원문(영문 코드·설명)은 감사 로그에만 남긴다
+    assert "안전 정책" in r.text and "해킹·사이버 공격" in r.text and "cyber" not in r.text
+    assert assistant.audit.records[-1].detail == "refusal: cyber — 테스트"
 
     assistant, _ = make_assistant([make_message("긴 답변", stop_reason="max_tokens")])
     r = assistant.chat(assistant.new_session(), "질문")
