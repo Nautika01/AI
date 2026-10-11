@@ -11,7 +11,7 @@
 
 두 단계로 평가한다.
 1) 검색 평가 (모델 호출 없음, 무료·수 초): hit@k, MRR
-2) 답변 평가 (모델 호출): 키워드 충족률, 금지어 위반, 차단 정확도, 토큰 사용량
+2) 답변 평가 (모델 호출): 키워드 충족률, 금지어 위반, 차단 정확도, 토큰 사용량(입력·캐시 읽기·출력)
 결과는 JSON 으로 저장해 이전 결과와 비교(--compare)할 수 있다.
 """
 
@@ -121,6 +121,8 @@ class AnswerResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     error: str | None = None
+    cache_read_tokens: int | None = None  # 프롬프트 캐시에서 읽은 입력(시스템 프롬프트·도구 정의). input_tokens 에는 포함되지 않는다.
+    cache_creation_tokens: int | None = None  # 프롬프트 캐시에 새로 쓴 입력. 역시 input_tokens 와 별도.
 
 
 def _alt_present(t: str, alt: str) -> bool:
@@ -155,7 +157,7 @@ def evaluate_answers(ask: Callable[[str], Any], cases: list[EvalCase], *, on_pro
             passed = blocked and error is None
         else:
             passed = error is None and not blocked and not missed and not forbidden
-        res = AnswerResult(c.id, c.question, answer, blocked, c.blocked, hit, missed, forbidden, tools, passed, seconds, usage.get("input_tokens"), usage.get("output_tokens"), error)
+        res = AnswerResult(c.id, c.question, answer, blocked, c.blocked, hit, missed, forbidden, tools, passed, seconds, usage.get("input_tokens"), usage.get("output_tokens"), error, usage.get("cache_read_input_tokens"), usage.get("cache_creation_input_tokens"))
         results.append(res)
         if on_progress:
             on_progress(i, len(cases), res)
@@ -173,6 +175,8 @@ def evaluate_answers(ask: Callable[[str], Any], cases: list[EvalCase], *, on_pro
         "avg_seconds": round(sum(r.seconds for r in results) / n, 2) if n else None,
         "total_input_tokens": sum(r.input_tokens or 0 for r in results),
         "total_output_tokens": sum(r.output_tokens or 0 for r in results),
+        "total_cache_read_tokens": sum(r.cache_read_tokens or 0 for r in results),
+        "total_cache_creation_tokens": sum(r.cache_creation_tokens or 0 for r in results),
         "failures": [{"id": r.id, "question": r.question, "missed": r.keywords_missed, "forbidden": r.forbidden_found, "blocked": r.blocked, "expected_blocked": r.expected_blocked, "error": r.error} for r in results if not r.passed],
         "results": [asdict(r) for r in results],
     }
@@ -219,7 +223,10 @@ class EvalReport:
                 lines.append(f"   ✖ {m['id']} {m['question']}  (기대: {', '.join(m['expected'])} / 결과: {', '.join(x.split(' › ')[-1] for x in m['got'][:3]) or '없음'})")
         if self.answers:
             a = self.answers
-            lines.append(f"[답변] 질문 {a['cases']}개  통과율 {_pct(a['pass_rate'])}  키워드 충족 {_pct(a['keyword_rate'])}  금지어 위반 {a['forbidden_violations']}  차단 정확도 {_pct(a['block_accuracy'])}  오류 {a['errors']}  평균 {a['avg_seconds']}초  토큰 입력 {a['total_input_tokens']} / 출력 {a['total_output_tokens']}")
+            # 캐시 토큰은 이전 보고서에 없을 수 있다
+            cache = [f"{label} {a[k]}" for label, k in (("캐시 읽기", "total_cache_read_tokens"), ("캐시 쓰기", "total_cache_creation_tokens")) if a.get(k)]
+            tokens = f"토큰 입력 {a['total_input_tokens']}" + (f" (+{' · '.join(cache)})" if cache else "") + f" / 출력 {a['total_output_tokens']}"
+            lines.append(f"[답변] 질문 {a['cases']}개  통과율 {_pct(a['pass_rate'])}  키워드 충족 {_pct(a['keyword_rate'])}  금지어 위반 {a['forbidden_violations']}  차단 정확도 {_pct(a['block_accuracy'])}  오류 {a['errors']}  평균 {a['avg_seconds']}초  {tokens}")
             for f in a["failures"][:10]:
                 why = f["error"] or (f"누락 {f['missed']}" if f["missed"] else "") + (f" 금지어 {f['forbidden']}" if f["forbidden"] else "") + (" 차단됨" if f["blocked"] and not f.get("expected_blocked") else "") + (" 차단 안 됨(답변 생성됨)" if f.get("expected_blocked") and not f["blocked"] else "")
                 lines.append(f"   ✖ {f['id']} {f['question']}  ({why.strip()})")

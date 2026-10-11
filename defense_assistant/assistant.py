@@ -203,6 +203,7 @@ class DefenseAssistant:
             input_tokens=turn.usage.get("input_tokens"),
             output_tokens=turn.usage.get("output_tokens"),
             cache_read_tokens=turn.usage.get("cache_read_input_tokens"),
+            cache_creation_tokens=turn.usage.get("cache_creation_input_tokens"),
             output_sha256=sha256_text(text),
             output_chars=len(text),
             **base,

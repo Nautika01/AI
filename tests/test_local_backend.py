@@ -52,7 +52,7 @@ def test_rag_injection_and_streaming(make_local):
     assert r.text.endswith("[1]") and "".join(chunks) == r.text
     assert r.tools_called == ["search_defense_docs"]
     assert r.served_by == "fake-model" and r.stop_reason == "end_turn"
-    assert r.usage == {"input_tokens": 42, "output_tokens": 7, "cache_read_input_tokens": None}
+    assert r.usage == {"input_tokens": 42, "output_tokens": 7, "cache_read_input_tokens": None, "cache_creation_input_tokens": None}
     sent = app.state.requests[-1]
     assert sent["messages"][0]["role"] == "system" and "국방" in sent["messages"][0]["content"]
     assert "[참고 문서]" in sent["messages"][-1]["content"] and "거수자 조치 절차" in sent["messages"][-1]["content"]

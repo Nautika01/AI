@@ -94,9 +94,21 @@ def test_usage_is_summed_over_tool_runner_iterations(make_assistant):
     ]
     assistant, _ = make_assistant(scripted)
     r = assistant.chat(assistant.new_session(), "질문")
-    assert r.usage == {"input_tokens": 14000, "output_tokens": 1000, "cache_read_input_tokens": 3000}
+    assert r.usage == {"input_tokens": 14000, "output_tokens": 1000, "cache_read_input_tokens": 3000, "cache_creation_input_tokens": None}
     rec = assistant.audit.records[-1]
     assert (rec.input_tokens, rec.output_tokens, rec.cache_read_tokens) == (14000, 1000, 3000)
+
+
+def test_cache_creation_tokens_are_summed_and_audited(make_assistant):
+    # 캐시 쓰기 토큰은 input_tokens 에 들어가지 않으므로 따로 합산해야 실제 입력량·비용이 보인다.
+    first = _with_usage(make_message("", stop_reason="tool_use", tool_uses=[("spell_phonetic", {"text": "AB"})]), 300, 50, 0)
+    first.usage.cache_creation_input_tokens = 3500
+    second = _with_usage(make_message("답"), 200, 80, 3500)
+    second.usage.cache_creation_input_tokens = 0
+    assistant, _ = make_assistant([first, second])
+    r = assistant.chat(assistant.new_session(), "질문")
+    assert r.usage["cache_creation_input_tokens"] == 3500 and r.usage["cache_read_input_tokens"] == 3500
+    assert assistant.audit.records[-1].cache_creation_tokens == 3500
 
 
 def test_usage_none_stays_none(make_assistant):
@@ -104,7 +116,7 @@ def test_usage_none_stays_none(make_assistant):
     msg.usage = SimpleNamespace(input_tokens=None, output_tokens=None, cache_read_input_tokens=None, iterations=None)
     assistant, _ = make_assistant([msg])
     r = assistant.chat(assistant.new_session(), "질문")
-    assert r.usage == {"input_tokens": None, "output_tokens": None, "cache_read_input_tokens": None}
+    assert r.usage == {"input_tokens": None, "output_tokens": None, "cache_read_input_tokens": None, "cache_creation_input_tokens": None}
 
 
 # --- 중단(Ctrl-C) 시 user 메시지 롤백 ------------------------------------------------

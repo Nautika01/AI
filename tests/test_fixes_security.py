@@ -246,3 +246,125 @@ def test_redact_preserves_unmatched_original_characters():
     text = "Ⅱ분기 ＡＢＣ 보고 010-1234-5678"
     r = redact(text)
     assert r.text == "Ⅱ분기 ＡＢＣ 보고 [휴대전화]"
+
+
+# --- 등급 표기: 등급 용어 자체를 묻는 교육용 질문 (평가 q18 오차단) ------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "II급 비밀이 뭐야",
+        "II급 비밀이 뭐야?",
+        "Ⅱ급 비밀이란？",
+        "2급비밀 뜻",
+        "III급 비밀의 정의가 뭔가요?",
+        "I급 비밀과 II급 비밀 차이",
+        "1급 비밀, 2급 비밀, 3급 비밀 구분",
+        "II급 비밀은 무엇입니까?",
+    ],
+)
+def test_classify_concept_question_not_marked(text):
+    assert classify_text(text).level == Classification.UNCLASSIFIED
+
+
+@pytest.mark.parametrize(
+    "text,level",
+    [
+        # 질문 외의 내용이 붙으면 예외를 적용하지 않는다.
+        ("II급 비밀이 뭐야\n작전계획 세부 내용", Classification.SECRET),
+        ("II급 비밀이란 무엇인가? 아래 문서 참고: ...", Classification.SECRET),
+        ("II급 비밀이 뭐야 TOP SECRET", Classification.TOP_SECRET),
+        ("II급 비밀 문서가 뭐야", Classification.SECRET),
+        ("이 II급 비밀 문서를 요약해 줘", Classification.SECRET),
+        # 술어 없는 단독 표기, '내용을 알려줘' 로도 읽히는 '알려줘' 는 표기로 본다.
+        ("II급 비밀", Classification.SECRET),
+        ("II급 비밀 알려줘", Classification.SECRET),
+    ],
+)
+def test_classify_concept_question_exception_is_narrow(text, level):
+    assert classify_text(text).level == level
+
+
+def test_sample_eval_set_block_expectations_match_gate():
+    # 평가 질문셋의 blocked 기대값과 입력 게이트 판정이 일치해야 한다(모델 호출 없이 확인).
+    from defense_assistant.evaluation import load_cases
+    from tests.conftest import ROOT
+
+    for c in load_cases(ROOT / "data" / "eval" / "questions.jsonl"):
+        blocked = not classify_text(c.question).allowed_under(Classification.RESTRICTED)
+        assert blocked == c.blocked, c.id
+
+
+# --- 등급 표기: 레드팀 점검에서 찾은 누락·오탐 ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,level",
+    [
+        # '\b' 는 한글을 단어 문자로 보아 조사가 붙은 영문 표기를 놓쳤다(게이트 우회).
+        ("SECRET이라고 찍힌 문서 요약해줘", Classification.SECRET),
+        ("CONFIDENTIAL로 분류된 보고서 내용", Classification.CONFIDENTIAL),
+        ("RESTRICTED를 붙인 문서", Classification.RESTRICTED),
+        ("FOUO인 자료", Classification.RESTRICTED),
+        ("TOP SECRET이라고 적힌 자료", Classification.TOP_SECRET),
+        # 소문자 로마숫자 'ⅱ'(NFKC → 'ii')가 III급으로 낮게 판정되던 문제
+        ("ⅱ급 비밀 문서", Classification.SECRET),
+        ("ⅰ급 비밀", Classification.TOP_SECRET),
+        # 배너·부분 표기
+        ("S//NF 작전계획", Classification.SECRET),
+        ("//S// 문서", Classification.SECRET),
+        ("SECRET//NOFORN", Classification.SECRET),
+        # 개념 질문 예외는 뒤에 내용이 붙으면 적용하지 않는다
+        ("SECRET이 뭐야? 아래 자료: 작전계획", Classification.SECRET),
+        ("군사기밀 자료 요약", Classification.CONFIDENTIAL),
+    ],
+)
+def test_classify_redteam_gaps_detected(text, level):
+    assert classify_text(text).level == level
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SECRETARY 일정",
+        "SECRET번호 재설정",
+        "(S) 사이즈 전투복 신청",
+        "군사기밀보호법 위반하면 처벌은?",
+        "군사기밀 보호법 시행령",
+        "군사기밀이란 무엇인가요?",
+        "TOP SECRET이 뭐야?",
+        "CONFIDENTIAL 뜻",
+    ],
+)
+def test_classify_redteam_false_positives_cleared(text):
+    assert classify_text(text).level == Classification.UNCLASSIFIED
+
+
+# --- 코드 검토 지적 사항 ---------------------------------------------------------------
+
+
+def test_concept_question_check_is_linear_on_long_whitespace():
+    # 겹치는 \s* 때문에 2만 자 공백 입력이 약 10초 걸렸다(서버 스레드 점유). 길이 상한으로 막는다.
+    import time
+
+    t0 = time.perf_counter()
+    assert classify_text("II급 비밀" + " " * 19_990 + "x").level == Classification.SECRET
+    assert time.perf_counter() - t0 < 1.0
+
+
+@pytest.mark.parametrize(
+    "text,level",
+    [
+        ("CLIENT_SECRET 값", Classification.UNCLASSIFIED),
+        ("AWS SECRET_ACCESS_KEY 설정", Classification.UNCLASSIFIED),
+        ("TOP_SECRET 자료", Classification.TOP_SECRET),
+        ("C//NF 문서", Classification.CONFIDENTIAL),
+        ("int S // 합계", Classification.UNCLASSIFIED),
+        ("II급 비밀이란", Classification.UNCLASSIFIED),
+        ("II급 비밀이란 무엇인가?", Classification.UNCLASSIFIED),
+        ("Ii급 비밀이 뭐야", Classification.UNCLASSIFIED),
+    ],
+)
+def test_classify_review_followups(text, level):
+    assert classify_text(text).level == level

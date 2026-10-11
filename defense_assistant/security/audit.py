@@ -40,6 +40,7 @@ class AuditRecord:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
     output_sha256: str | None = None
     output_chars: int | None = None
     detail: str | None = None

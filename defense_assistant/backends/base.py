@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
+# TurnResult.usage 의 키. 백엔드가 보고하지 않는 값은 None.
+# cache_read 는 캐시에서 읽은 입력(약 0.1배 단가), cache_creation 은 캐시에 새로 쓴 입력(약 1.25배 단가). 둘 다 input_tokens 에 포함되지 않는다.
+USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
 OnText = Callable[[str], None]
 OnTool = Callable[[str, dict[str, Any]], None]
 
